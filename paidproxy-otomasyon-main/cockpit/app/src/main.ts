@@ -150,7 +150,10 @@ async function selectAgent(id:string){
   renderAgents(); renderDetail();
   setStatus('Ajan seçildi · olaylar yükleniyor');
   try{ await invoke('set_display_target',{agentId:id}); }catch{}
-  try{ const r=await call('replay',{agent_id:id,after_seq:0}); state.events=Array.isArray(r.events)?r.events:[]; renderDetail(); }catch{}
+  // Replay arka planda yüklensin; tıklama hemen tepki versin.
+  void (async()=>{
+    try{ const r=await invoke<any>('agentd',{command:'replay',payload:{agent_id:id,after_seq:0}}); if(state.selected!==id) return; state.events=Array.isArray(r.events)?r.events.slice(-250):[]; renderDetail(); setStatus('Olaylar yüklendi'); }catch(err){ setStatus(`Olaylar alınamadı · ${String(err)}`,true); }
+  })();
 }
 async function sendInstruction(instruction:string, context:Record<string,unknown>={}){ if(!state.selected||!instruction.trim()) return; const r=await call('intervene',{agent_id:state.selected,instruction,context}); if(r?.intervention_id) setStatus(`Yönlendirme kaydedildi · ${String(r.intervention_id).slice(0,18)}…`); }
 function text(id:string,value:unknown){ const el=document.getElementById(id); if(el) el.textContent=String(value??''); }
@@ -286,16 +289,24 @@ async function refresh(){
   if(refreshing) return;
   refreshing=true;
   try{
+    // Ağır replay çağrısını ilk açılışta yapma: önce ajan listesi gelsin, ekran dolsun.
     const r=await call('status');
     state.agents=Array.isArray(r.agents)?r.agents:[];
     state.connected=true;
     const c=document.querySelector('#connection')!; c.textContent='● VDS BAĞLI'; c.classList.add('online');
     const dc=(r.display_control||{}) as Record<string,unknown>;
     const opSel=String(dc.operator_selected_agent||'');
-    if(opSel&&opSel!==state.selected){ /* başka yüzey seçim yapmış olabilir; bilgi ver */ setStatus(`VDS yüzey seçimi: ${opSel.slice(0,24)}…`); }
-    if(!state.selected&&state.agents[0]) await selectAgent(state.agents[0].agent_id);
+    if(opSel&&opSel!==state.selected){ setStatus(`VDS yüzey seçimi: ${opSel.slice(0,24)}…`); }
     renderAgents(); renderDetail();
   }catch{ renderAgents(); }
   finally{ refreshing=false; }
 }
-appShell(); refresh(); setInterval(refresh,15000);
+async function refreshSlow(){
+  // Olay akışı ayrı ve seyrek güncellenir; ekranı kilitlemez.
+  if(!state.selected||refreshing) return;
+  try{
+    const r=await invoke<any>('agentd', { command:'replay', payload:{ agent_id:state.selected, after_seq:0 } });
+    if(Array.isArray(r.events)){ state.events=r.events.slice(-250); renderDetail(); }
+  }catch{ /* sessiz geç: liste yine görünür kalır */ }
+}
+appShell(); refresh(); setInterval(refresh,15000); setInterval(refreshSlow,15000);

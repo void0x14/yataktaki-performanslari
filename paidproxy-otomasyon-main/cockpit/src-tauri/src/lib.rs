@@ -44,6 +44,62 @@ struct Watcher {
     stdin: Option<ChildStdin>,
 }
 
+/// Kalıcı agentd köprüsü: her komutta yeni Python + SSH açılmaz.
+/// Tek süreç açık kalır, istekler stdin/stdout üzerinden satır satır gider.
+struct Bridge {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
+}
+
+static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
+
+fn bridge_call(request: Value) -> Result<Value, String> {
+    let mut guard = BRIDGE.lock().map_err(|e| e.to_string())?;
+    let mut need_spawn = guard.is_none();
+    if !need_spawn {
+        if let Some(bridge) = guard.as_mut() {
+            if bridge.child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                need_spawn = true;
+                *guard = None;
+            }
+        }
+    }
+    if need_spawn {
+        let root = project_root();
+        let mut child = Command::new(venv_python(&root))
+            .arg(root.join("desktop/tauri_bridge.py"))
+            .arg("--loop")
+            .current_dir(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("agentd köprüsü başlatılamadı: {e}"))?;
+        let stdin = child.stdin.take().ok_or("köprü stdin kullanılamıyor")?;
+        let stdout = child.stdout.take().ok_or("köprü stdout kullanılamıyor")?;
+        *guard = Some(Bridge {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        });
+    }
+    let bridge = guard.as_mut().ok_or("köprü yok")?;
+    bridge
+        .stdin
+        .write_all(request.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    bridge.stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+    bridge.stdin.flush().map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    bridge.stdout.read_line(&mut line).map_err(|e| e.to_string())?;
+    if line.trim().is_empty() {
+        *guard = None;
+        return Err("köprü boş yanıt verdi".into());
+    }
+    serde_json::from_str(&line).map_err(|e| format!("köprü yanıtı çözülemedi: {e}"))
+}
+
 static WATCHER: Mutex<Option<Arc<Mutex<Watcher>>>> = Mutex::new(None);
 
 fn watcher_arc() -> Result<Arc<Mutex<Watcher>>, String> {
@@ -166,60 +222,29 @@ fn stop_watcher() -> Result<(), String> {
 
 #[tauri::command]
 fn agentd(command: String, payload: Value) -> Result<Value, String> {
-    use std::time::Duration;
-    let root = project_root();
+    use std::time::{Duration, Instant};
     let mut request = payload.as_object().cloned().unwrap_or_default();
-    request.insert("command".into(), Value::String(command));
-    let mut child = Command::new(venv_python(&root))
-        .arg(root.join("desktop/tauri_bridge.py"))
-        .current_dir(&root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("agentd köprüsü başlatılamadı: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or("köprü stdin kullanılamıyor")?
-        .write_all(Value::Object(request).to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    // Köprü yanıt vermezse pencereyi kilitleme: 15 saniyede kes.
-    let output = wait_with_timeout(&mut child, Duration::from_secs(15))
-        .ok_or("VDS yanıt vermedi (15sn zaman aşımı)")?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    request.insert("command".into(), Value::String(command.clone()));
+    // Ağır komutları buda: status artık event_history taşımaz, liste hafifler.
+    if command == "status" {
+        request.insert("slim".into(), Value::Bool(true));
     }
-    serde_json::from_slice(&output.stdout).map_err(|e| format!("köprü yanıtı çözülemedi: {e}"))
-}
-
-fn wait_with_timeout(child: &mut Child, timeout: std::time::Duration) -> Option<std::process::Output> {
-    use std::time::Instant;
     let start = Instant::now();
+    let timeout = Duration::from_secs(15);
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                // Çocuk zaten bitmiş; kalan çıktıyı topla.
-                use std::io::Read;
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_end(&mut stdout);
-                }
-                if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_end(&mut stderr);
-                }
-                return Some(std::process::Output { status, stdout, stderr });
-            }
-            Ok(None) => {
+        match bridge_call(Value::Object(request.clone())) {
+            Ok(value) => return Ok(value),
+            Err(err) => {
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
+                    return Err(err);
                 }
-                thread::sleep(std::time::Duration::from_millis(50));
+                // Köprü öldüyse bir kez yeniden dene.
+                if err.contains("boş yanıt") || err.contains("köprü yok") {
+                    thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                return Err(err);
             }
-            Err(_) => return None,
         }
     }
 }
