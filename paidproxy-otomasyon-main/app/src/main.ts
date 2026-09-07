@@ -31,7 +31,9 @@ const selected = () => state.agents.find(a => a.agent_id === state.selected);
 const humanControl = () => state.owner === 'human' && state.liveState === 'LIVE';
 
 async function call(command: string, payload: Record<string, unknown> = {}) {
-  setStatus(`${command} · VDS yanıtı bekleniyor`);
+  // Tıklama anında tepki ver: düğme hemen basılmış görünür, sonuç sonra gelir.
+  setStatus(`${command} · gönderildi`);
+  const timer = window.setTimeout(()=>setStatus(`${command} · VDS yanıtı bekleniyor (uzun sürerse pencere kilitlenmez)`), 1500);
   try {
     const result = await invoke<any>('agentd', { command, payload });
     setStatus(`${command} · tamamlandı`);
@@ -39,6 +41,8 @@ async function call(command: string, payload: Record<string, unknown> = {}) {
   } catch (error) {
     setStatus(`Bağlantı hatası · ${String(error)}`, true);
     throw error;
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
@@ -143,8 +147,9 @@ function inspect(index:number){
 }
 async function selectAgent(id:string){
   state.selected=id; state.events=[]; state.inspectIndex=-1; state.inspectDataUrl='';
-  try{ await invoke('set_display_target',{agentId:id}); }catch{}
   renderAgents(); renderDetail();
+  setStatus('Ajan seçildi · olaylar yükleniyor');
+  try{ await invoke('set_display_target',{agentId:id}); }catch{}
   try{ const r=await call('replay',{agent_id:id,after_seq:0}); state.events=Array.isArray(r.events)?r.events:[]; renderDetail(); }catch{}
 }
 async function sendInstruction(instruction:string, context:Record<string,unknown>={}){ if(!state.selected||!instruction.trim()) return; const r=await call('intervene',{agent_id:state.selected,instruction,context}); if(r?.intervention_id) setStatus(`Yönlendirme kaydedildi · ${String(r.intervention_id).slice(0,18)}…`); }
@@ -221,8 +226,8 @@ async function tencereStrike(e:MouseEvent){
 function bind(){
   document.querySelector<HTMLInputElement>('#agent-search')!.oninput=renderAgents;
   document.addEventListener('keydown',e=>{ if(e.ctrlKey&&e.key.toLowerCase()==='k'){e.preventDefault();showPalette(!document.querySelector('#palette')!.classList.contains('open'));} if(e.key==='Escape')showPalette(false); });
-  document.querySelectorAll<HTMLElement>('[data-tool]').forEach(el=>el.onclick=()=>{state.tool=el.dataset.tool!;document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===el));document.querySelector('#screen')!.className=`screen tool-${state.tool}`;});
-  document.querySelectorAll<HTMLElement>('[data-command]').forEach(el=>el.onclick=async()=>{ if(!state.selected)return setStatus('Önce ajan seçin',true); const cmd=el.dataset.command!; await call(cmd,{agent_id:state.selected,reason:'tauri-cockpit'}); if(cmd==='replay') await selectAgent(state.selected); showPalette(false); });
+  document.querySelectorAll<HTMLElement>('[data-tool]').forEach(el=>el.onclick=()=>{state.tool=el.dataset.tool!;document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===el));document.querySelector('#screen')!.className=`screen tool-${state.tool}`; setStatus(`Araç: ${state.tool}`);});
+  document.querySelectorAll<HTMLElement>('[data-command]').forEach(el=>el.onclick=async()=>{ el.classList.add('active'); window.setTimeout(()=>el.classList.remove('active'),300); if(!state.selected)return setStatus('Önce ajan seçin',true); const cmd=el.dataset.command!; setStatus(`${cmd} · gönderildi`); await call(cmd,{agent_id:state.selected,reason:'tauri-cockpit'}); if(cmd==='replay') await selectAgent(state.selected); showPalette(false); });
   document.querySelectorAll<HTMLElement>('[data-instruction]').forEach(el=>el.onclick=()=>sendInstruction(el.dataset.instruction!));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach(el=>el.onclick=()=>setTab(el.dataset.tab!));
   document.querySelectorAll<HTMLElement>('[data-action]').forEach(el=>el.onclick=async(e:MouseEvent)=>{

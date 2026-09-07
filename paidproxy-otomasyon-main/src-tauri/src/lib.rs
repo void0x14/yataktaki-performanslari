@@ -149,25 +149,14 @@ fn stop_watcher() -> Result<(), String> {
             .clone()
     };
     if let Some(arc) = arc {
+        // Önce kibarca dur de, olmazsa hemen öldür. Pencereyi bekletme.
         let _ = send_watcher_line("{\"action\":\"stop\"}");
-        for _ in 0..10 {
-            thread::sleep(std::time::Duration::from_millis(250));
-            let exited = {
-                let mut watcher = arc.lock().map_err(|e| e.to_string())?;
-                matches!(watcher.child.try_wait(), Ok(Some(_)))
-            };
-            if exited {
-                break;
-            }
+        {
+            let mut watcher = arc.lock().map_err(|e| e.to_string())?;
+            let _ = watcher.child.kill();
+            let _ = watcher.child.wait();
+            watcher.stdin = None;
         }
-        let mut watcher = arc.lock().map_err(|e| e.to_string())?;
-        if let Some(stdin) = watcher.stdin.as_mut() {
-            let _ = stdin.write_all(b"{\"action\":\"stop\"}\n");
-            let _ = stdin.flush();
-        }
-        let _ = watcher.child.kill();
-        let _ = watcher.child.wait();
-        watcher.stdin = None;
     }
     if let Ok(mut guard) = WATCHER.lock() {
         *guard = None;
@@ -177,6 +166,7 @@ fn stop_watcher() -> Result<(), String> {
 
 #[tauri::command]
 fn agentd(command: String, payload: Value) -> Result<Value, String> {
+    use std::time::Duration;
     let root = project_root();
     let mut request = payload.as_object().cloned().unwrap_or_default();
     request.insert("command".into(), Value::String(command));
@@ -194,11 +184,44 @@ fn agentd(command: String, payload: Value) -> Result<Value, String> {
         .ok_or("köprü stdin kullanılamıyor")?
         .write_all(Value::Object(request).to_string().as_bytes())
         .map_err(|e| e.to_string())?;
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    // Köprü yanıt vermezse pencereyi kilitleme: 15 saniyede kes.
+    let output = wait_with_timeout(&mut child, Duration::from_secs(15))
+        .ok_or("VDS yanıt vermedi (15sn zaman aşımı)")?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     serde_json::from_slice(&output.stdout).map_err(|e| format!("köprü yanıtı çözülemedi: {e}"))
+}
+
+fn wait_with_timeout(child: &mut Child, timeout: std::time::Duration) -> Option<std::process::Output> {
+    use std::time::Instant;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Çocuk zaten bitmiş; kalan çıktıyı topla.
+                use std::io::Read;
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_end(&mut stdout);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_end(&mut stderr);
+                }
+                return Some(std::process::Output { status, stdout, stderr });
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// UI'ın seçtiği ajan kimliği (frontend `set_display_target` ile yazar).

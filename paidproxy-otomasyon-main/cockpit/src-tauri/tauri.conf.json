@@ -4,6 +4,6 @@
   "version": "2.0.0",
   "identifier": "dev.paidproxy.cockpit",
   "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist-ui" },
-  "app": { "windows": [{ "title": "PaidProxy — Operasyon Kokpiti", "width": 1586, "height": 992, "minWidth": 1180, "minHeight": 720, "decorations": true }], "security": { "csp": null } },
+  "app": { "windows": [{ "title": "PaidProxy — Operasyon Kokpiti", "width": 1400, "height": 900, "minWidth": 1024, "minHeight": 640, "resizable": true, "maximized": false, "decorations": true }], "security": { "csp": null } },
   "bundle": { "active": true, "targets": "all" }
 }
