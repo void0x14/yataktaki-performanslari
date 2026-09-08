@@ -1,0 +1,116 @@
+# Iteration 14H2 — stopping worker handover
+
+Oluşturulma: 2026-09-06
+İncelenen alan: VDS üzerinde gerçek, salt-okur FD handover probe'u. Serve, cutover ve servis yeniden başlatma yapılmadı.
+
+## Karar
+
+10 canlı PaidProxy worker'ın tamamı handover adayına dahil edildi. 20/20 stdout/stderr pipe read-end eşleşmesi inode fstat ile doğrulandı. PID 64639, persisted state "stopping" olmasına rağmen dahil edildi. Bir başka persisted "stopping" kayıt olan ajan-10c9647a6eb94b50 / PID 64117 artık /proc'ta yok; canlı worker olmadığı için manifest dışında kaldı ve state değiştirilmedi.
+
+## PID 64639 forensic timeline
+
+- 2026-09-05T19:50:27.811+00:00, seq 1413: process_started, PID/PGID 64639.
+- 2026-09-05T20:33:14.352+00:00, seq 1824: hard_kill_requested; operator_action=native-cockpit.
+- Sonraki ilgili agent_killed veya agent exit olayı yok.
+- Probe anında: PID 64639 mevcut, PPID 63887, PGID 64639, /proc state S, starttime_ticks 17877093.
+- Persisted state: stopping; next_action=SIGTERM then SIGKILL if needed; last_error=null.
+- Sonuç: süreç canlı kaldığı için stopping durumu canlı geçiş adayı olarak korundu; otomatik running/paused/killed/SIGTERM/SIGKILL uygulanmadı.
+
+## Persisted/runtime inventory
+
+Persisted state candidate rows: 11
+Live matching process candidates: 10
+Fully mapped workers: 10
+Mapped streams: 20/20
+Omitted persisted candidate: ajan-10c9647a6eb94b50, PID 64117, state stopping, /proc absent; last hard_kill_requested seq 1796, matching live process yok.
+
+| agent_id | PID/PGID | starttime | stdout inode -> old agentd FD | stderr inode -> old agentd FD |
+|---|---:|---:|---|---|
+| ajan-14163494ffe44921 | 64639/64639 | 17877093 | 1849636 -> 32 | 1849637 -> 34 |
+| ajan-17573a30e78a4cdf | 64654/64654 | 17877815 | 1849772 -> 16 | 1849773 -> 21 |
+| ajan-279e72e3da334d14 | 64658/64658 | 17877898 | 1849779 -> 22 | 1849780 -> 25 |
+| ajan-3d4609baf2c2488b | 64660/64660 | 17877926 | 1849783 -> 24 | 1849784 -> 28 |
+| ajan-5ce143c150b848ee | 64602/64602 | 17875012 | 1847881 -> 13 | 1847882 -> 18 |
+| ajan-5d2a59df6d3e4a5f | 64614/64614 | 17875431 | 1847930 -> 17 | 1847931 -> 27 |
+| ajan-8639c102a2f34b66 | 64597/64597 | 17874908 | 1847859 -> 15 | 1847860 -> 19 |
+| ajan-99cd52355f734377 | 64675/64675 | 17878063 | 1849802 -> 29 | 1849803 -> 51 |
+| ajan-bd80defd467e417e | 64663/64663 | 17878028 | 1849793 -> 26 | 1849794 -> 30 |
+| ajan-c05233115c944f28 | 64656/64656 | 17877844 | 1849775 -> 20 | 1849776 -> 23 |
+
+Her satırda stdout ve stderr duplicate_verified=true. Probe duplicate FD'leri okuma yapılmadan kapattı.
+
+## Source
+
+- services/agentd/supervisor.py
+  - local SHA256: e37057b2711815beef52cb78e8d5033338715af6b84e9e0d2cfe3f704aa9de2c
+  - VDS SHA256: e37057b2711815beef52cb78e8d5033338715af6b84e9e0d2cfe3f704aa9de2c
+  - adopted handles accept running/paused/stopping
+  - adopted PID identity uses /proc starttime + PGID
+  - adopted streams use existing _read_worker_stream
+  - dedicated paidproxy-worker-io executor remains for persistent readline/wait
+- services/agentd/handover.py
+  - local SHA256: 240aaeea87d8116cbb5ffc59e19791fe796cbf873ae34f466b6fec71649a0599
+  - VDS SHA256: 240aaeea87d8116cbb5ffc59e19791fe796cbf873ae34f466b6fec71649a0599
+  - candidate states: running, paused, stopping
+  - cmdline must identify services.agentd.worker and matching --agent-id
+  - terminal persisted record is rejected if its matching worker process is still alive
+  - partial worker/stream/FD manifests fail closed
+
+## Probe
+
+Command: /usr/bin/python3 -m services.agentd.handover --mode probe --root /home/mani/paidproxy-otomasyon/var/agentd --agentd-pid 63887
+Probe timestamp: 2026-09-06T00:24:18.880+00:00
+Mode: probe
+No bytes read: true
+Duplicate FDs closed: true
+PID 64639 included: true
+PID 64639 stdout mapped: true
+PID 64639 stderr mapped: true
+
+## Continuity
+
+- agentd before/after: PID 63887 unchanged.
+- evidence before/after: PID 79382 unchanged.
+- Sway before/after: PID 79390 unchanged.
+- wayvnc before/after: PID 79396 unchanged.
+- surface before/after: PID 79397 unchanged.
+- all 10 worker PID/PGID/starttime values unchanged.
+- event seq before: 1956.
+- event seq after probe: 1956; no new event was generated during the observation window. This is consistent with the previously proven agentd executor starvation and is not evidence that the probe caused loss.
+- passive evidence: wf-recorder was active before and after; recorder PID rotated naturally between video segments (83581, 83687, 83717). Evidence service PID did not change.
+- no worker exit or SIGPIPE was observed.
+
+## Validation rules
+
+1. Explicit probe/serve mode; no implicit adoption from an arbitrary socket.
+2. Exact root and old-agentd identity.
+3. Candidate set includes persisted running, paused, and stopping records with PID/PGID.
+4. PID, PGID, starttime and current PaidProxy worker cmdline/agent id must match.
+5. Probe requires worker PPID to be current old agentd.
+6. stdout/stderr must be pipes and each must map to exactly one old-agentd read FD.
+7. Duplicate inode must match by fstat; duplicate is never read and is closed.
+8. Duplicate worker pipe inodes, malformed IDs, missing streams, incomplete sets, PID/PGID/starttime mismatches and live terminal workers fail closed.
+9. Receiver validates the complete live candidate set and every passed FD before adoption.
+10. Adopted workers preserve PID/PGID controls and existing stream ingestion; exit code is never fabricated.
+
+## Explicit non-actions
+
+SOURCE_STAGED_TO_VDS=true
+RUNNING_AGENTD_RELOADED=false
+HANDOVER_SERVE_EXECUTED=false
+AGENTD_RESTART=false
+EVIDENCE_RESTART=false
+WORKER_RESTART=false
+AGENTD_OR_WORKER_SIGNAL=false
+TESTS=false (user instruction)
+BUILD=false
+LINT=false
+MOCK=false
+XVFB=false
+OFFSCREEN=false
+NEW_AGENT=false
+STATE_MUTATION_TO_MAKE_PROBE_PASS=false
+
+## Gate
+
+14H2 inventory/probe gate: PASS for the live set (10/10 workers, 20/20 streams), with one explicitly recorded stale persisted stopping row excluded only because its process is absent. The event sequence remained unchanged during the probe; passive video continued. Actual FD broker serve and systemd/agentd cutover remain prohibited until a separate 14I plan.

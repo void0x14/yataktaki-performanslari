@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionOutput",
+  "type": "object",
+  "required": ["action", "resource_plan", "stop_condition"],
+  "properties": {
+    "action": {
+      "enum": ["research", "sample", "expand", "full_scan", "defer", "drop", "reassess", "deep_test"]
+    },
+    "targets": {"type": "array"},
+    "items": {"type": "array"},
+    "resource_plan": {"type": "object"},
+    "stop_condition": {"type": "object"}
+  }
+}

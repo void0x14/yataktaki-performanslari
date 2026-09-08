@@ -1,0 +1,5 @@
+"""paidproxy-agentd giriş noktası."""
+from .supervisor import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

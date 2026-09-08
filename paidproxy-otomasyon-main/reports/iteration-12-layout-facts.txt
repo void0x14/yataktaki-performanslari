@@ -1,0 +1,12 @@
+iteration=mission-control-layout
+workspace_width=1412
+workspace_height=685
+mode=MEDIUM
+rail_width=245
+center_width=813
+right_width=350
+live_height=295
+replay_visible=True
+lower_workspace_visible=True
+inspector_visible=True
+rail_compact_mode=False

@@ -1,0 +1,38 @@
+PaidProxy — Iterasyon 9 preflight canlı kaydı
+Zaman: 2026-09-05T20:07:46Z civarı
+İncelenen alan: salt gözlem; operasyonel mutasyon yapılmadı.
+
+VDS operasyon servisleri:
+- paidproxy-agentd.service: active, MainPID 63887, listener 127.0.0.1:8787
+- paidproxy-evidence.service: active, MainPID 59572
+- Sway: PID 59583, PGID 59572, canlı
+- wayvnc: PID 59591, PGID 59572, 127.0.0.1:5900, canlı
+- Sway surface foot: PID 59592, PGID 59572, canlı
+- capability: ready=true, wayland-1, gerçek frame=true, video=true, heartbeat=2026-09-05T20:07:46Z
+- VNC listener gerçek bağlantı noktası: 127.0.0.1:5900; agentd: 127.0.0.1:8787
+
+Kabul ajanı / önceki Iterasyon 8:
+- ajan-10c9647a6eb94b50, worker PID/PGID 64117, state=stopping kaydı
+- process group canlı değil; yalnız supervisor durable reconcile gerekiyor
+- bu ajan Iterasyon 9 boyunca tek reconcile hedefidir
+
+Dokunulmayacak mevcut ajanlar:
+- ajan-8639c102a2f34b66 PID/PGID 64597 state=running
+- ajan-5ce143c150b848ee PID/PGID 64602 state=running
+- ajan-5d2a59df6d3e4a5f PID/PGID 64614 state=running
+- ajan-14163494ffe44921 PID/PGID 64639 state=running
+- ajan-17573a30e78a4cdf PID/PGID 64654 state=running
+- ajan-c05233115c944f28 PID/PGID 64656 state=running
+- ajan-279e72e3da334d14 PID/PGID 64658 state=running
+- ajan-3d4609baf2c2488b PID/PGID 64660 state=running
+- ajan-bd80defd467e417e PID/PGID 64663 state=running
+- ajan-99cd52355f734377 PID/PGID 64675 state=running
+Not: Bu ajanlara pause/resume/kill/destroy uygulanmayacaktır.
+
+Diğer durable durum:
+- agentd son global seq: 1807
+- video owner: ajan-99cd52355f734377, request 9b60cea4507d47f59e275f8f95107e0e, state=active
+- video-selection: ajan-99cd52355f734377
+- pending video request dosyaları: ajan-14163494ffe44921, ajan-17573a30e78a4cdf, ajan-279e72e3da334d14, ajan-3d4609baf2c2488b, ajan-5ce143c150b848ee, ajan-5d2a59df6d3e4a5f, ajan-8639c102a2f34b66, ajan-99cd52355f734377, ajan-bd80defd467e417e, ajan-c05233115c944f28
+- video-revoke-request.json: mevcut değil
+- agentd/evidence/Sway/wayvnc: snapshot anında ayakta

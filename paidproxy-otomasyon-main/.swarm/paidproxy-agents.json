@@ -1,0 +1,10 @@
+{
+  "providers": [
+    "mimo",
+    "gemini-web2api"
+  ],
+  "models": [
+    "mimo-v2.5-pro",
+    "gemini-3.5-flash-thinking-lite"
+  ]
+}

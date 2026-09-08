@@ -1,0 +1,27 @@
+Iteration 8 provider runtime evidence
+
+local_captured_at=2026-09-05T22:44:12+03:00
+vds_captured_at=2026-09-05T19:44:14+00:00
+local_sha256=37ef731f7f32fbfe27f20cfddf2f0b49d7cdc0fb59d9bbaa1f3f1620230526e7  src/proxy_pipeline/agents/ai_havuz.py
+vds_sha256_before_deploy=37ef731f7f32fbfe27f20cfddf2f0b49d7cdc0fb59d9bbaa1f3f1620230526e7  /home/mani/paidproxy-otomasyon/src/proxy_pipeline/agents/ai_havuz.py
+
+provider_observations:
+- Zen /models returned HTTP 403 without a Zen key.
+- OpenRouter /models returned HTTP 200 with 431 models.
+- OpenRouter previous configured model nvidia/nemotron-3.5-lightning:free returned HTTP 429.
+- NVIDIA configured model returned HTTP 404.
+- DeepSeek configured model returned HTTP 402.
+- OpenRouter minimax/minimax-m3:free returned HTTP 200 with a real response.
+
+runtime_observations:
+- Fresh empty-input production agent initially reached OpenRouter but worker failed on decision_made event construction: TypeError: emit_worker_event() got multiple values for argument 'working_note'.
+- Source fix is limited to services/agentd/ai_runtime.py and is deployed separately from this provider file.
+- Exact production AgentRuntime path then returned provider=openrouter, model=minimax/minimax-m3:free, action=research.
+- Iteration 8 provider parser hardening is approved by ChatGPT and is pending implementation after this pre-change hash record.
+
+pre_vds_parser_deploy:
+- local_captured_at=2026-09-05T22:46:28+03:00
+- vds_captured_at=2026-09-05T19:46:30+00:00
+- local_sha256=1d2cd4b136eebcb1acb13430d50c08be1321456c923cb7b7dcb070f9fe4be303  src/proxy_pipeline/agents/ai_havuz.py
+- vds_sha256_before_deploy=37ef731f7f32fbfe27f20cfddf2f0b49d7cdc0fb59d9bbaa1f3f1620230526e7  /home/mani/paidproxy-otomasyon/src/proxy_pipeline/agents/ai_havuz.py
+- deployment_area=only src/proxy_pipeline/agents/ai_havuz.py; credentials and var/agentd excluded

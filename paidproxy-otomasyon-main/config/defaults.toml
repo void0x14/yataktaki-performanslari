@@ -1,0 +1,47 @@
+[storage]
+database = "var/db/pipeline.sqlite3"
+payload_root = "var/payloads"
+queue_root = "var/queue"
+spool_root = "var/spool"
+archive_root = "var/archive"
+cache_root = "var/cache"
+log_root = "var/logs"
+
+[execution]
+# Technical profile only; semantic target decisions are AI-produced.
+name = "default"
+connect_timeout_ms = 1000
+handshake_timeout_ms = 3000
+total_timeout_ms = 8000
+max_attempts = 1
+concurrency = 32
+backoff_ms = 0
+jitter_ms = 0
+
+[evidence]
+# Teknik capture/retention sınırlarıdır; hedef, port ve kalite kararı AI'ye aittir.
+headless_width = 1280
+headless_height = 720
+headless_output = "HEADLESS-1"
+frame_interval_seconds = 2
+frame_retention = 240
+video_segment_seconds = 30
+video_retention = 8
+video_fairness_cooldown_seconds = 1
+capture_queue_timeout_seconds = 0.2
+operator_view_lease_seconds = 90
+evidence_control_timeout_seconds = 20
+still_capture_queue_limit = 128
+wayvnc_loopback_port = 5900
+wayland_display = "paidproxy-wayland"
+runtime_dir = "/run/paidproxy-wayland"
+surface_refresh_seconds = 0.5
+surface_render_settle_seconds = 0.25
+surface_program = "foot"
+
+[auth]
+management_network_only = true
+
+[backup]
+hourly_snapshot = true
+daily_full = true

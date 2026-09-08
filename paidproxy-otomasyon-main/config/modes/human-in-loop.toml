@@ -1,0 +1,10 @@
+name = "human-in-loop"
+type = "human_in_loop"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+agent = "decision"
+approver = "operator"

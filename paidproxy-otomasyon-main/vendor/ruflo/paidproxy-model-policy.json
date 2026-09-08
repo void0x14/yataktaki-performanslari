@@ -1,0 +1,17 @@
+{
+  "keys_file": "~/.config/paidproxy/keys.txt",
+  "providers": {
+    "mimo": {
+      "model": "mimo-v2.5-pro",
+      "token_plan_base_url": "https://token-plan-cn.xiaomimimo.com/v1"
+    },
+    "gemini-web2api": {
+      "model": "gemini-3.5-flash-thinking-lite",
+      "base_url": "http://127.0.0.1:8081/v1"
+    }
+  },
+  "excluded_upstream_surfaces": [
+    "Security",
+    "Agent Federation"
+  ]
+}

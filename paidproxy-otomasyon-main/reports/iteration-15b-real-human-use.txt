@@ -1,0 +1,63 @@
+# PaidProxy — gerçek insan kullanım kanıtı
+
+Tarih: 2026-09-06
+İncelenen alan: Native masaüstü uygulaması + gerçek VDS runtime. Test, mock, fixture, build veya sentetik ekran kullanılmadı.
+
+## 15B-FIX2 gerçek create ve geometry kabulü
+
+- Native uygulama `./desktop-launch` ile açıldı ve ana pencere kapanmadan kaldı.
+- `Yeni VDS ajanı` retained/non-blocking dialog olarak göründü.
+- Gerçek fare/klavye etkileşimiyle create gönderildi.
+- VDS event zinciri: `seq=1979 command_received create` → `seq=1980 agent_created` → `seq=1981 command_completed`.
+- Oluşturulan gerçek ajan: `ajan-e71746b84c5a4541`, state=`created`, pet=`Pus-4541`.
+- AUTO_START=false; yeni network operasyonu başlatılmadı.
+- ResultsPanel korundu; sonuç sayısı VDS’de yayımlanmış gerçek proxy olmadığı için 0 kaldı.
+
+## 15C gerçek VDS handover kabulü
+
+- Eski `agentd` main PID: `63887`.
+- Yeni `agentd` main PID: `91953`; systemd active/running.
+- 10 canlı worker aynı PID/PGID/starttime/pipe inode kimlikleriyle korundu; worker’lar yeni main’e orphan edilmiş durumda çalışmaya devam etti.
+- Handover broker 20/20 stdout/stderr pipe mapping’ini ve duplicate inode doğrulamasını tamamladı.
+- Geçici `/run/systemd/system/paidproxy-agentd.service.d/90-paidproxy-handover.conf` kaldırıldı; daemon-reload sonrası base unit `KillMode=control-group` ve normal ExecStart’a döndü.
+- VDS `display_select` artık takılmıyor: `seq=3536 command_received` → `seq=3540 command_completed`.
+
+## 16A gerçek WayVNC/RFB kabulü
+
+- Kök neden: `desktop/app/live_vnc.py` RFB ServerInit’in sabit 24 byte’ını okuyup desktop-name string’ini tüketmiyordu; sonraki name byte’ı server message type olarak `87` okunuyordu.
+- Düzeltme: name length güvenli sınırla okunuyor, desktop-name tüketiliyor; ServerInit sonrası state `CONNECTED`, yalnız gerçek framebuffer update type `0` QImage’e çözüldükten sonra state `LIVE` oluyor.
+- Yalnız `desktop/app/live_vnc.py` değiştirildi; server, agentd, evidence, scanner ve result path değiştirilmedi.
+- Gerçek native uygulama yeniden açıldı ve gerçek `Tosba-4b66` seçildi.
+- UI’da gerçek VDS framebuffer göründü: `CANLI VDS YÜZEYİ · ajan-8639c102a2f34b66 · LIVE`; VDS görüntü boyutu `1280×720`.
+- Gerçek ekran içeriği WayVNC/Sway yüzeyindeki terminaldir; sentetik görüntü yok.
+- Başlangıç geometry: `x=0 y=68 width=1785 height=1030`.
+- 8 saniye sonraki geometry: `x=0 y=68 width=1785 height=1030`.
+- Ekran dışına taşma: `false`; canlı framebuffer sonrası büyüme: `false`; uygulama açık kaldı: `true`.
+- ResultsPanel görünür ve korunmuş; gerçek doğrulanmış proxy sonucu: `0`.
+
+## Alanlar
+
+ROOT_GEOMETRY_CAUSE=EvidenceTheater QLabel pixmap sizeHint feedback
+EVIDENCE_FRAME_BOUNDING=true
+MAIN_LAYOUT_NO_CONSTRAINT=true
+SCREEN_MAX_GUARD=true
+WINDOW_INITIAL_GEOMETRY=1785x1030+0+68
+WINDOW_AFTER_STATUS_GEOMETRY=1785x1030+0+68
+WINDOW_AFTER_EVIDENCE_GEOMETRY=1785x1030+0+68
+WINDOW_EXCEEDED_AVAILABLE_SCREEN=false
+CREATE_DIALOG_NONBLOCKING=true
+CREATE_DIALOG_VISIBLE=true
+CREATE_COMMAND_SENT=true
+CREATED_AGENT_ID=ajan-e71746b84c5a4541
+CREATE_STATE=created
+AUTO_START=false
+NEW_NETWORK_OPERATION=false
+RESULTS_PANEL_PRESERVED=true
+APP_REMAINED_OPEN=true
+SYNTHETIC_AGENT=false
+SYNTHETIC_RESULT=false
+TESTS=false
+
+## Açık gerçek durum
+
+Canlı yüzey ve native görünürlük kabulü geçti. VDS’deki AI sağlayıcısı şu anda gerçek araç kararı vermediği için worker event’leri `ai_unavailable`/`reflection_waiting` olarak görünür; sahte ilerleme üretilmiyor. Bu nedenle henüz gerçek yayımlanmış proxy sonucu yoktur ve ana goal tamamlanmış değildir.

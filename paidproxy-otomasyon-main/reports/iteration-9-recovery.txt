@@ -1,0 +1,31 @@
+PaidProxy — Iterasyon 9 recovery kaydı
+Zaman: 2026-09-05T20:09:20Z civarı
+
+Hedef:
+- ajan-10c9647a6eb94b50
+- eski worker PID/PGID 64117
+- VDS kontrolü: process group GONE
+- önceki control timeout süresi aşılmıştı
+- gönderilen üretim reconcile komutu: tam olarak 1 adet hard_kill
+- sonuç: istemci cevabı dönmedi; ikinci komut gönderilmedi
+
+Son durable agentd durumu:
+- hedef state=stopping
+- next_action=SIGTERM then SIGKILL if needed
+- last_seq=1800
+- yeni olaylar içinde hard_kill_requested seq=1796 var
+- agent_killed ve command_completed yok
+- seq=1800 frame_captured geldi; agentd/evidence event akışı canlı
+
+Kontrol yuvası:
+- video-revoke-request.json: ABSENT
+- video owner: ajan-5d2a59df6d3e4a5f, request=c133faf4d0fb450b81c216636215aef6, state=active, pid=59572
+- pending video-request-* sayısı: 15
+- pending hedefler: ajan-14163494ffe44921, ajan-17573a30e78a4cdf, ajan-17656d286ba84d63, ajan-279e72e3da334d14, ajan-3d4609baf2c2488b, ajan-4f6f3834a4354b06, ajan-5ce143c150b848ee, ajan-5d2a59df6d3e4a5f, ajan-6d3343fb077c41db, ajan-8639c102a2f34b66, ajan-99cd52355f734377, ajan-b7f52062fc484981, ajan-bd80defd467e417e, ajan-c05233115c944f28, ajan-e90cab452ca749af
+- paidproxy-evidence.service journal: bu zaman aralığında kayıt yok
+
+Karar:
+- İterasyon 9 planı gereği control bölümü burada durduruldu.
+- Dokunulmayacak ajanlara hiçbir lifecycle komutu gönderilmedi.
+- Doğrudan SIGKILL uygulanmadı; hedef grup zaten ölüydü ve plan bunu bu iterasyonda telafi etmeyi yasaklıyor.
+- Ana servisler çalışır durumda tutuldu.

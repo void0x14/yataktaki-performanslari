@@ -3,10 +3,16 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "pnpm": ">=11.10.0",
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc && vite build",
-    "tauri": "tauri"
+    "preinstall": "sh scripts/pnpm-only.sh",
+    "dev": "sh scripts/pnpm-only.sh && vite --host 127.0.0.1",
+    "build": "sh scripts/pnpm-only.sh && tsc && vite build",
+    "tauri": "sh scripts/pnpm-only.sh && tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

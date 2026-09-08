@@ -1,0 +1,211 @@
+PaidProxy Iteration 7 live preflight (post-bootstrap)
+command_exit_code=0
+remote_command=read-only SSH inventory; credentials and bearer values redacted
+== collected_utc ==
+2026-09-05T19:02:16Z
+== hostname_uname_os ==
+thinkpad
+Linux thinkpad 6.12.107+deb13-cloud-arm64 #1 SMP Debian 6.12.107-1 (2026-08-29) aarch64 GNU/Linux
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+NAME="Debian GNU/Linux"
+VERSION_ID="13"
+VERSION="13 (trixie)"
+VERSION_CODENAME=trixie
+DEBIAN_VERSION_FULL=13.6
+ID=debian
+HOME_URL="https://www.debian.org/"
+== resources ==
+2
+               total        used        free      shared  buff/cache   available
+Mem:           3.8Gi       408Mi       1.7Gi       6.0Mi       1.9Gi       3.4Gi
+Swap:             0B          0B          0B
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        63G  2.2G   58G   4% /
+/dev/sda1        63G  2.2G   58G   4% /
+== commands ==
+python3 path=/usr/bin/python3
+Python 3.13.5
+masscan path=/usr/bin/masscan
+
+Masscan version 1.3.2 ( https://github.com/robertdavidgraham/masscan )
+Compiled on: Jul 25 2024 16:44:22
+sway path=/usr/bin/sway
+sway version 1.10.1
+wayvnc path=/usr/bin/wayvnc
+wayvnc: 0.9.1
+neatvnc: 0.9.1
+aml: 0.3.0
+grim path=/usr/bin/grim
+/usr/bin/grim: invalid option -- '-'
+wf-recorder path=/usr/bin/wf-recorder
+wf-recorder 0.5.0
+foot path=/usr/bin/foot
+foot version: 1.21.0 +pgo +ime +graphemes -assertions
+ffmpeg path=/usr/bin/ffmpeg
+ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers
+built with gcc 14 (Debian 14.2.0-19)
+== imports_as_mani ==
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import services.agentd, proxy_pipeline; print("imports=ok")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'proxy_pipeline'
+== systemd ==
+-- paidproxy-evidence.service --
+enabled
+activating
+MainPID=0
+ExecMainStatus=3
+WorkingDirectory=/home/mani/paidproxy-otomasyon
+User=mani
+LoadState=loaded
+ActiveState=activating
+SubState=auto-restart
+FragmentPath=/etc/systemd/system/paidproxy-evidence.service
+-- paidproxy-agentd.service --
+enabled
+active
+MainPID=58738
+ExecMainStatus=0
+WorkingDirectory=/home/mani/paidproxy-otomasyon
+User=mani
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/paidproxy-agentd.service
+== journals ==
+-- paidproxy-evidence.service --
+Sep 05 19:01:41 thinkpad systemd[1]: Started paidproxy-evidence.service - PaidProxy real Sway headless evidence surface.
+Sep 05 19:01:56 thinkpad systemd[1]: paidproxy-evidence.service: Main process exited, code=exited, status=3/NOTIMPLEMENTED
+Sep 05 19:01:56 thinkpad systemd[1]: paidproxy-evidence.service: Failed with result 'exit-code'.
+Sep 05 19:01:59 thinkpad systemd[1]: paidproxy-evidence.service: Scheduled restart job, restart counter is at 1.
+Sep 05 19:01:59 thinkpad systemd[1]: Started paidproxy-evidence.service - PaidProxy real Sway headless evidence surface.
+Sep 05 19:02:14 thinkpad systemd[1]: paidproxy-evidence.service: Main process exited, code=exited, status=3/NOTIMPLEMENTED
+Sep 05 19:02:14 thinkpad systemd[1]: paidproxy-evidence.service: Failed with result 'exit-code'.
+-- paidproxy-agentd.service --
+Sep 05 14:24:57 thinkpad (python3)[45950]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:24:57 thinkpad (python3)[45950]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:24:57 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:24:57 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:24:59 thinkpad systemd[1]: paidproxy-agentd.service: Scheduled restart job, restart counter is at 6.
+Sep 05 14:24:59 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:24:59 thinkpad (python3)[45967]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:24:59 thinkpad (python3)[45967]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:24:59 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:24:59 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:25:02 thinkpad systemd[1]: paidproxy-agentd.service: Scheduled restart job, restart counter is at 7.
+Sep 05 14:25:02 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:25:02 thinkpad (python3)[45971]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:25:02 thinkpad (python3)[45971]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:25:02 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:25:02 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:25:04 thinkpad systemd[1]: paidproxy-agentd.service: Scheduled restart job, restart counter is at 8.
+Sep 05 14:25:04 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:25:04 thinkpad (python3)[45977]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:25:04 thinkpad (python3)[45977]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:25:04 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:25:04 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:25:06 thinkpad systemd[1]: paidproxy-agentd.service: Scheduled restart job, restart counter is at 9.
+Sep 05 14:25:06 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:25:06 thinkpad (python3)[45982]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:25:06 thinkpad (python3)[45982]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:25:06 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:25:06 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:25:08 thinkpad systemd[1]: paidproxy-agentd.service: Scheduled restart job, restart counter is at 10.
+Sep 05 14:25:08 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:25:08 thinkpad (python3)[45991]: paidproxy-agentd.service: Failed to set up mount namespacing: /home/mani/paidproxy-otomasyon/var/agentd: No such file or directory
+Sep 05 14:25:08 thinkpad (python3)[45991]: paidproxy-agentd.service: Failed at step NAMESPACE spawning /usr/bin/python3: No such file or directory
+Sep 05 14:25:08 thinkpad systemd[1]: paidproxy-agentd.service: Main process exited, code=exited, status=226/NAMESPACE
+Sep 05 14:25:08 thinkpad systemd[1]: paidproxy-agentd.service: Failed with result 'exit-code'.
+Sep 05 14:25:09 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:25:09 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:28:17 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 14:28:17 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 14:28:17 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:28:17 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:48:59 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 14:48:59 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 14:48:59 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:48:59 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:51:05 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 14:51:05 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 14:51:05 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:51:05 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:51:26 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 14:51:26 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 14:51:26 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 14:51:26 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 15:00:18 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 15:00:18 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 15:00:18 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 15:00:18 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 19:01:41 thinkpad systemd[1]: Stopping paidproxy-agentd.service - PaidProxy VDS agent supervisor...
+Sep 05 19:01:41 thinkpad systemd[1]: paidproxy-agentd.service: Deactivated successfully.
+Sep 05 19:01:41 thinkpad systemd[1]: Stopped paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+Sep 05 19:01:41 thinkpad systemd[1]: Started paidproxy-agentd.service - PaidProxy VDS agent supervisor.
+== processes ==
+USER         PID    PPID    PGID STAT CMD
+mani       46135       1   46131 S    python3 -m services.agentd --root /tmp/paidproxy-agentd-debug --host 127.0.0.1 --port 8788
+mani       58738       1   58738 Ssl  /usr/bin/python3 -m services.agentd --root /home/mani/paidproxy-otomasyon/var/agentd --host 127.0.0.1 --port 8787
+== listeners ==
+LISTEN 0      4096         0.0.0.0:5355      0.0.0.0:*                                      
+LISTEN 0      4096      127.0.0.54:53        0.0.0.0:*                                      
+LISTEN 0      100        127.0.0.1:8787      0.0.0.0:*    users:(("python3",pid=58738,fd=6))
+LISTEN 0      100        127.0.0.1:8788      0.0.0.0:*    users:(("python3",pid=46135,fd=6))
+LISTEN 0      1024         0.0.0.0:8888      0.0.0.0:*                                      
+LISTEN 0      128          0.0.0.0:22        0.0.0.0:*                                      
+LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*                                      
+LISTEN 0      4096            [::]:5355         [::]:*                                      
+LISTEN 0      1024            [::]:8888         [::]:*                                      
+LISTEN 0      128             [::]:22           [::]:*                                      
+== wayland_runtime ==
+find: ‘/run/paidproxy-wayland’: No such file or directory
+== capabilities ==
+-- /home/mani/paidproxy-otomasyon/var/agentd/display-capability.json --
+{
+  "capture_kind": "sway-headless",
+  "headless": true,
+  "ready": false,
+  "started_at": "2026-09-05T19:01:59.578+00:00",
+  "wayland_display": "paidproxy-wayland",
+  "runtime_dir": "/run/paidproxy-wayland",
+  "output": "HEADLESS-1",
+  "wayvnc_loopback_port": 5900,
+  "sway_available": true,
+  "wayvnc_available": true,
+  "grim_available": true,
+  "wf_recorder_available": true,
+  "sway_running": false,
+  "wayland_socket": false,
+  "wayvnc_running": false,
+  "wayvnc_loopback_ready": false,
+  "surface_running": false,
+  "surface_available": false,
+  "real_frame_available": false,
+  "video_capture_available": false,
+  "wayvnc_stream_ref": "vds://wayvnc/loopback",
+  "reason": "Sway headless Wayland socket açılmadı",
+  "stopped_at": "2026-09-05T19:02:14.587+00:00"
+}
+== agentd_inventory ==
+-rw------- mani:mani 14859 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-79be3b8056fc4129/manifest.json
+-rw------- mani:mani 16407 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-756cdd3b5de64bcd/manifest.json
+-rw------- mani:mani 170 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-756cdd3b5de64bcd/outputs/tool-00000-observe_vds_surface-error.json
+-rw------- mani:mani 170 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-b1e5c8d5e108438b/outputs/tool-00000-observe_vds_surface-error.json
+-rw------- mani:mani 17643 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-65cff89ec1d645f3/manifest.json
+-rw------- mani:mani 1872 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-756cdd3b5de64bcd/outputs/tool-catalog.json
+-rw------- mani:mani 1872 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-79be3b8056fc4129/outputs/tool-catalog.json
+-rw------- mani:mani 1872 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-b1e5c8d5e108438b/outputs/tool-catalog.json
+-rw------- mani:mani 194 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-0608dc772d5b4fca/preflight.json
+-rw------- mani:mani 194 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-756cdd3b5de64bcd/preflight.json
+-rw------- mani:mani 194 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-79be3b8056fc4129/preflight.json
+-rw------- mani:mani 194 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-b1e5c8d5e108438b/preflight.json
+-rw------- mani:mani 19863 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-b1e5c8d5e108438b/manifest.json
+-rw------- mani:mani 622 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-756cdd3b5de64bcd/outputs/tool-00000-observe_vds_surface.json
+-rw------- mani:mani 622 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-79be3b8056fc4129/outputs/tool-00000-observe_vds_surface.json
+-rw------- mani:mani 622 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-b1e5c8d5e108438b/outputs/tool-00000-observe_vds_surface.json
+-rw------- mani:mani 774 /home/mani/paidproxy-otomasyon/var/agentd/display-capability.json
+-rw------- mani:mani 94315 /home/mani/paidproxy-otomasyon/var/agentd/agents.json
+-rw------- mani:mani 9925 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-0608dc772d5b4fca/manifest.json
+-rw------- mani:mani 9953 /home/mani/paidproxy-otomasyon/var/agentd/agents/ajan-f1cd9c1efc98477c/manifest.json
+-rw-r--r-- mani:mani 107220 /home/mani/paidproxy-otomasyon/var/agentd/events.jsonl

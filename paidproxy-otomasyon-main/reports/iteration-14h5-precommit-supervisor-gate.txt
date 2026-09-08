@@ -1,0 +1,121 @@
+# Iteration 14H5 — Pre-Commit No-Consume Supervisor Gate
+
+Tarih: 2026-09-06
+Proje: paidproxy-otomasyon-main
+Çalışma sınırı: mevcut PaidProxy projesi ve mevcut VDS runtime.
+Plan kaynağı: mevcut PaidProxy ChatGPT/C2C sohbetindeki 14H5 planı.
+
+## Uygulanan kaynak
+
+Bu dilimde yalnızca `services/agentd/supervisor.py` değiştirildi.
+`services/agentd/handover.py` değiştirilmedi.
+
+Yerel ve VDS SHA256 eşleşmesi:
+
+`f5fea658fff13f3fc2b64e1747700a0efaae1cb276d697b7cedec57113860f27`
+
+Uygulanan davranış:
+
+- Adopted 20 stdout/stderr reader task'ı ve 10 exit watcher task'ı commit öncesi yalnızca PREPARED bariyerinde bekliyor.
+- Commit öncesi reader hiçbir `read`, `readline` veya executor okuması yapmıyor.
+- Commit öncesi `process_adopted` ve recovery reconciliation mutasyonu yapılmıyor.
+- Reconciliation önce salt-okur plan olarak hesaplanıyor; uygulama commit sonrasına bırakılıyor.
+- `adoption_commit` sonrasında activation event açılıyor, bookkeeping çalışıyor ve en son command gate açılıyor.
+- `--handover-prepare-only` gerçek handover session'ı ile prepare edip alternatif loopback portta kapanıyor; commit, activation ve command serving yapmıyor.
+
+## Gerçek VDS prepare-only yürütmesi
+
+Üretim agentd PID 63887 çalışırken:
+
+- broker PID: 85266
+- prepare-only supervisor PID: 85270
+- protocol: 2
+- manifest ID: `handover-85266-1788657030736974292`
+- alternatif loopback port: 43371
+- supervisor exit durumu: 0
+- adopted handles: 10
+- prepared stream task'ları: 20
+- prepared watcher task'ları: 10
+- prepared toplam: 30/30
+- activation event: false
+- command-ready gate: false
+- stream read attempts: 0
+- server bound: true
+- prepare-only committed: false
+
+Salt-okur reconciliation planında stale kayıt şu şekilde görüldü:
+
+- agent: `ajan-10c9647a6eb94b50`
+- PID: 64117
+- PGID: 64117
+- persisted state: `stopping`
+- process present: false
+
+Prepare-only supervisor kapandıktan sonra:
+
+- broker canlı kaldı: evet
+- broker'ın tuttuğu pipe FD: 20
+- handover socket mevcut: evet
+- üretim agentd'e commit gönderilmedi
+- worker/evidence/state mutasyonu yapılmadı
+- events.jsonl seq önce: 1956
+- events.jsonl seq sonra: 1956
+
+Event seq sabit kaldığı için prepare-only sürecinden `process_adopted`, `recovery_required` veya `supervisor_started` olayı yazılmadı.
+
+## Aynı broker üzerinden retry ve commit
+
+Prepare-only alıcı commit etmeden kapandıktan sonra, aynı broker ve donmuş manifest üzerinden sıfır-okumalı alıcı bağlandı:
+
+- retry manifest ID'si ilk manifest ile aynı: evet
+- retry doğrulanan worker: 10
+- retry doğrulanan stream FD: 20
+- retry inode validation: true
+- retry `committed=true`: evet
+- retry `stream_bytes_read=0`: evet
+- retry exit durumu: 0
+- broker exit durumu: 0
+- commit sonrası socket: yok
+
+Bu, prepare-only alıcının commit öncesi veri tüketmeden ve state değiştirmeden kapanabildiğini; broker'ın 20 FD'yi koruduğunu; ikinci alıcının aynı FD manifestiyle commit edebildiğini gösterdi.
+
+## Runtime sürekliliği
+
+Dry-run sonrasında salt-okur kontrolde:
+
+- agentd: PID 63887, starttime 17857789, PGID 63887
+- evidence: PID 79382, starttime 19142627, PGID 79382
+- Sway: PID 79390, PGID 79382, starttime 19142635
+- wayvnc: PID 79396, PGID 79382, starttime 19142655
+- surface: PID 79397, PGID 79382, starttime 19142655
+- 10 worker'ın tamamı aynı PID/PGID/starttime değerleriyle ayakta
+- PID 64639 / ajan-14163494ffe44921: state `stopping`, starttime 17877093, değişmedi
+- PID 64117: süreç yok; persisted manifest kaydı `stopping`, değiştirilmedi
+- 127.0.0.1:8787 sahibi yalnızca mevcut agentd PID 63887
+- wf-recorder canlı süreç olarak gözlendi: PID 85334
+- events.jsonl son seq: 1956
+
+## Yapılmayanlar
+
+- production agentd restart edilmedi.
+- worker, evidence, Sway veya wayvnc restart/kill/sinyal edilmedi.
+- production 8787'ye bağlanılmadı veya yeniden bind edilmedi.
+- systemd değişikliği yapılmadı.
+- gerçek cutover yapılmadı.
+- proxy taraması yapılmadı.
+- test, mock, fixture, build, lint, Xvfb veya offscreen çalışma yapılmadı.
+- yeni ajan, yeni proje veya yeni sohbet oluşturulmadı.
+
+## Sonuç
+
+14H5 pre-commit gate gerçek VDS runtime'ında geçti:
+
+- 30/30 task PREPARED oldu.
+- prepare-only receiver 0 stream read attempt ile kapandı.
+- activation ve command gate commit öncesi kapalı kaldı.
+- stale PID 64117 yalnızca planlandı, commit öncesi mutasyona uğramadı.
+- broker 20 FD'yi koruyarak retry kabul etti.
+- ikinci alıcı aynı manifest ile commit etti.
+- mevcut production agentd ve worker topology değişmedi.
+
+14I gerçek cutover değildir ve ayrı ChatGPT/C2C incelemesi olmadan başlatılmayacaktır.

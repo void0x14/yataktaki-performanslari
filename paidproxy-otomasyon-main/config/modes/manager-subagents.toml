@@ -1,0 +1,10 @@
+name = "manager-subagents"
+type = "manager_subagents"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+manager = "decision"
+specialists = ["source_research", "network_intelligence", "historical_pattern", "high_value_assessment", "critic"]

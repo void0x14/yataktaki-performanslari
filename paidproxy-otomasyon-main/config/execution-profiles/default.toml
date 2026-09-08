@@ -1,0 +1,11 @@
+name = "default"
+connect_timeout_ms = 1000
+handshake_timeout_ms = 3000
+total_timeout_ms = 8000
+max_attempts = 1
+concurrency = 32
+backoff_ms = 50
+jitter_ms = 25
+circuit_breaker_errors = 20
+protocol_order = []
+retryable_errors = ["TimeoutError", "ConnectionError"]

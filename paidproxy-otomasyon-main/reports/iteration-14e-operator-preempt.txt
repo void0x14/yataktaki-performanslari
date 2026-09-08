@@ -1,0 +1,127 @@
+PAIDPROXY ITERATION 14E — OPERATOR PREEMPT RUNTIME REPORT
+===============================================================
+
+Date
+----
+2026-09-05 UTC
+
+İncelenen alan
+-----
+C2C 14E bounded operator preemption slice.
+Only source file changed:
+  services/agentd/evidence_display.py
+
+Local and VDS source SHA-256
+----------------------------
+cc690784326c1a1d8f2a506e15969e3af6f645cf70240de2880fba02310693a6
+The same digest was observed on the VDS copy.
+
+Implementation boundary
+-----------------------
+- Existing stop_wf_recorder() remains unchanged for passive rotation,
+  ordinary evidence shutdown, revoke, and non-live-view paths.
+- Added an operator-only SIGINT 3s / SIGTERM 2s / SIGKILL 1s stop path.
+- The helper reports mode, elapsed_seconds, graceful, and final_pid_dead.
+- Surface switching is refused when the recorder PID is not confirmed dead.
+- Forced termination is recorded as interrupted/error; the partial MKV is
+  not given immutable finalized provenance.
+- Passive demand is re-armed after operator preemption.
+- Operator request identity is re-read after preemption. A superseded or
+  stale request is not committed and a newer request is never unlinked.
+- Operator selection and ACK carry request age and preemption timing facts.
+- Rejected stale requests raise a factual command error to the caller.
+- Existing mailbox filenames and wire fields remain compatible.
+
+Runtime baseline before evidence restart
+----------------------------------------
+Observed at 2026-09-05T23:20:49Z:
+  paidproxy-agentd.service MainPID: 63887
+  paidproxy-evidence.service MainPID: 59572
+  Sway: 59583
+  wayvnc: 59591
+  active passive wf-recorder observed: 79311
+  workers observed:
+    64597  ajan-8639c102a2f34b66
+    64602  ajan-5ce143c150b848ee
+    64614  ajan-5d2a59df6d3e4a5f
+    64639  ajan-14163494ffe44921
+    64654  ajan-17573a30e78a4cdf
+    64656  ajan-c05233115c944f28
+    64658  ajan-279e72e3da334d14
+    64660  ajan-3d4609baf2c2488b
+    64663  ajan-bd80defd467e417e
+    64675  ajan-99cd52355f734377
+  pending operator request: null
+  operator selection: null
+  effective evidence_control_timeout_seconds: 20
+
+Deployment
+----------
+- Synced only services/agentd/evidence_display.py to VDS.
+- Restarted only paidproxy-evidence.service at 2026-09-05T23:21:23Z.
+- paidproxy-agentd.service was not restarted or signalled.
+- No worker was restarted, created, or signalled.
+
+Runtime after evidence restart
+------------------------------
+Observed at 2026-09-05T23:21:46Z:
+  paidproxy-agentd.service MainPID: 63887 (unchanged)
+  paidproxy-evidence.service MainPID: 79382 (new evidence process)
+  Sway: 79390
+  wayvnc: 79396
+  evidence surface: 79397
+  wayvnc loopback: ready
+  display capability: ready=true
+  real_frame_available: true
+  video_capture_available: true
+  active passive wf-recorder observed: 79407
+  worker PIDs/agent IDs: unchanged from baseline
+
+Native VDS app acceptance attempt
+---------------------------------
+- Exactly one patched native VDS Qt application was launched, process PID 79915.
+- It ran on the VDS Sway/Wayland display, not the laptop.
+- VDS connection was configured to loopback 127.0.0.1 with the forwarded SSH
+  agent; this fixed the earlier VDS host-key context error.
+- The application received the real VDS agent stream and displayed 23 agents.
+- The application selected the existing running agent
+  ajan-8639c102a2f34b66 (pet/display name: Tosba-4b66) and issued one
+  display_select request.
+- The real VDS virtual-screen capture showed the request ending with:
+  display_select: TimeoutError: timed out
+- No operator-selection.json or operator-display-request.json remained after
+  the failed attempt.
+- Exact selection commit timestamp, preemption ACK identity, stop mode, and
+  RPC duration were not produced by the runtime; they are therefore not
+  claimed here. The last direct pre-select passive recorder observation was
+  PID 79407 at 23:21:46Z. No fabricated timing is used.
+- No SSH VNC forward opened for the failed attempt.
+- LiveVncViewer did not reach genuine LIVE.
+- Release was not issued after a selection that never committed.
+- Passive recording naturally resumed; at 23:27:50Z wf-recorder PID 80498
+  was active for ajan-bd80defd467e417e and video-owner state was active.
+- The app was then closed; no desktop.app.main process remained.
+- agentd remained PID 63887 and evidence remained PID 79382 after app close.
+
+Real VDS visual artifacts
+-------------------------
+  reports/iteration-14e-artifacts/vds-wayland-before.png
+  reports/iteration-14e-artifacts/vds-wayland-connected.png
+  reports/iteration-14e-artifacts/vds-wayland-select-result.png
+
+The images were captured from the VDS Sway/Wayland virtual display with grim
+and copied back for inspection. No laptop GUI capture was used.
+
+14E stop classification
+-----------------------
+The single native desktop display_select still did not complete. Per the C2C
+stop condition, no second patch was made in Iteration 14E. The remaining
+blocker is not desktop concurrency. The runtime did not provide a committed
+operator selection, so the bounded operator preemption acceptance and
+production LiveVncViewer acceptance remain unproven.
+
+Explicit exclusions
+-------------------
+No tests, build, lint, compile, mock, fixture, Xvfb, offscreen rendering,
+new agent, worker restart, agentd restart, protocol migration, or timeout
+inflation was performed.

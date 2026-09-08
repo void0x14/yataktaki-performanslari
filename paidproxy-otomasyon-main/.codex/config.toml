@@ -1,0 +1,4 @@
+# Project-specific Codex Configuration with Full Permissions (Tam Yetki)
+sandbox_mode = "danger-full-access"
+approvals_reviewer = "user"
+ask_for_approval = "never"

@@ -1,0 +1,24 @@
+[Unit]
+Description=Proxy Pipeline control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxy-pipeline
+Group=proxy-pipeline
+WorkingDirectory=/opt/proxy-pipeline
+ExecStart=/usr/bin/python3 -m proxy_pipeline.cli.main serve --host 127.0.0.1 --port 8080
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proxy-pipeline
+MemoryMax=4G
+LimitNOFILE=65536
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

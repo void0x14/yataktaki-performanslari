@@ -1,0 +1,54 @@
+# Iteration 14D — display-control serialization
+
+Tarih: 2026-09-05
+İncelenen alan: Native desktop’un display_select/display_release RPC’lerini tek uçtan serileştirmek; VDS operasyonlarını değiştirmemek.
+
+## Değişen kaynak
+
+- desktop/app/remote_worker.py
+  - display_select ve display_release için tek FIFO lane.
+  - Aynı anda en fazla bir display-control RPC.
+  - ordinary status/replay/viewport/control çağrılarının bağımsız davranışı korunuyor.
+- desktop/app/main.py
+  - desired_live_agent, inflight_display_command, inflight_display_agent, live_view_agent ayrımı.
+  - A→B seçiminde release/select çakışması yok.
+  - inflight seçim sırasında release yalnızca desired state olarak tutuluyor.
+  - stream kopması display RPC tamamlandı gibi işlenmiyor.
+  - timeout aynı ajan için otomatik retry üretmiyor.
+  - kapanış inflight display RPC’nin transport’unu altından çekmiyor.
+
+## Drain ve operasyon PID’leri
+
+- Eski 14C desktop GUI instance’ları kapatıldı.
+- pending_operator_selection: null
+- operator_selected_agent: null
+- Manual control-file silme yapılmadı.
+- agentd PID: 63887 (önce/sonra aynı)
+- evidence service PID: 59572 (önce/sonra aynı)
+- Sway PID: 59583 (önce/sonra aynı)
+- wayvnc PID: 59591 (önce/sonra aynı)
+- surface PID: 59593 (önce/sonra aynı)
+- Mevcut worker PID’leri acceptance sırasında çalışır kaldı.
+- Pasif wf-recorder doğal olarak çalışıyordu; kabul sırasındaki son gözlemde ajan-8639c102a2f34b66 için PID 78752 aktifti.
+
+## Gerçek acceptance sonucu
+
+- Patched native Qt uygulaması VDS Sway’de PID 78200 ile ayakta kaldı.
+- Sway ağacında gerçek PaidProxy — Operasyon Kokpiti penceresi vardı.
+- Aynı VDS’den gerçek wayvnc RFB framebuffer 1280x720 olarak alındı.
+- Official desktop display-control lane kaynakta tek-flight oldu.
+- Ancak tek bir patched display_select RPC de 30 saniyede TimeoutError: timed out aldı.
+- Son durumda operator_selected_agent=None, pending_operator_selection=None; production LiveVncViewer LIVE olmadı ve VNC forward açılmadı.
+- Bu nedenle 14D stop koşulu oluştu. Server-side evidence mailbox, timeout inflation, agentd restart veya başka patch uygulanmadı.
+
+## Kanıt
+
+- VDS RFB capture: reports/iteration-14c-artifacts/vds-wayvnc-paidproxy.jpg
+- RFB capture SHA256: 38dae32c13032b082f76830a22da0784fb2d27aea69d54b3c6bc41c7900cd17d
+- Native Qt penceresi ve gerçek VDS yüzeyi aynı RFB capture içinde görüldü.
+
+## Kısıtlar
+
+Laptop GUI/capture/resize yapılmadı.
+Test, build, lint, mock, fixture, Xvfb veya offscreen çalıştırılmadı.
+Yeni ajan oluşturulmadı; ajan pause/resume/kill yapılmadı; agentd/evidence/Sway/wayvnc restart edilmedi.

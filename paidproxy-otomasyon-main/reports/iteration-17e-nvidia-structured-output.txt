@@ -1,0 +1,64 @@
+# Iteration 17E — NVIDIA structured-output contract
+
+Date: 2026-09-06
+İncelenen alan: Provider request contract and one real operational canary. No discovery scan was authorized in this iteration.
+
+## Source/config
+
+- Changed only `src/proxy_pipeline/agents/ai_havuz.py`.
+- Local/VDS SHA-256: `a68931a2a9b22d2937fb6fd8029e0787f131f427ac67def6f98dd2840aa65ecf`.
+- For NVIDIA Nemotron 3.5 Lightning only, request body now includes:
+  - `response_format={"type":"json_object"}`
+  - `chat_template_kwargs={"enable_thinking":false}`
+- The production parser was not relaxed.
+- After a real structured-output pass, only `NVIDIA_MODEL` was atomically changed to the live-validated model `nvidia/nemotron-3.5-lightning-30b-a3b`.
+- No API-key or credential line changed.
+
+## Real provider evidence
+
+- Standalone structured-output request: real provider `nvidia`, model `nvidia/nemotron-3.5-lightning-30b-a3b`, HTTP response parsed by production parser, action `defer`, requested_tools empty.
+- Fresh production `HavuzBeyni().decide()`: real provider `nvidia`, same model, action `research`, requested_tools empty.
+- No source fallback or synthetic decision was used.
+
+## Real operational canary
+
+- Created exactly one new agent through existing agentd RPC:
+  - agent: `ajan-7b2895cf738648b6`
+  - pet: `Kor-48b6`
+  - PID: `118591`
+  - job: `is-99ac721058fe4b9f`
+- Real event chain:
+  - `process_started`: seq `9212`
+  - `workspace_observed`: seq `9215`, output `preflight.json`
+  - `decision_made`: seq `9237`, provider `nvidia`, model `nvidia/nemotron-3.5-lightning-30b-a3b`, action `research`
+  - `observe_vds_surface` completed with real VDS output: seq `9238-9239`
+  - canary paused by agentd RPC: seq `9324`, state `paused`
+- A real operational issue was observed and retained as evidence: the model requested `browse_public_source` with an invalid/non-http URL, and the existing tool returned `ValueError: yalnız http/https kaynak kabul edilir`. This is an actual next tool-contract/decision-quality blocker, not hidden or converted to success.
+- No masscan, target selection, discovery scan, proxy validation, or proxy publication was started.
+- `published_proxies` remained empty.
+
+## Identity protection
+
+- Pre-existing worker snapshot before canary: 11.
+- After canary pause: 12 total, with only new PID `118591`.
+- Every pre-existing PID/PGID/starttime/fd1/fd2 identity remained unchanged.
+- agentd MainPID remained `91953`.
+- Existing 10 workers and paused Pus-4541 were not restarted or signalled.
+
+## Acceptance
+
+PROVIDER_DECISION=true
+OPERATIONAL_CANARY=true
+CANARY_PAUSED=true
+PROXY_PUBLISHED=false
+CREDENTIAL_CHANGED=false
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+MOCK=false
+TESTS=false
+SYNTHETIC_RESULT=false
+
+Result: NVIDIA provider recovery and real decision visibility passed. The next real blocker is decision/tool-contract quality: invalid model-generated public-source arguments must be rejected or repaired visibly before discovery can be trusted.

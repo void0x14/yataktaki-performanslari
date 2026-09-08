@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Pipeline controlled echo service
+After=network-online.target
+
+[Service]
+Type=simple
+User=proxy-pipeline
+WorkingDirectory=/opt/proxy-pipeline
+Environment=ECHO_SECRET_FILE=/etc/proxy-pipeline/echo.secret
+Environment=ECHO_REGION=local
+Environment=ECHO_PORT=8787
+ExecStart=/usr/bin/python3 /opt/proxy-pipeline/services/echo/app.py
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

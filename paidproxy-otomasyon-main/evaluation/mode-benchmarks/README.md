@@ -1,0 +1,1 @@
+Compare single agent, manager/subagents, router, ensemble, reproducible and fresh reevaluation on the same candidate pool. The execution profile and measurement window stay equal. Only Stage-1 decisions change.

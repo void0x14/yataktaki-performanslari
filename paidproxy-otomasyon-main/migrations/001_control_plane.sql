@@ -1,0 +1,3 @@
+-- Canonical schema is applied by proxy_pipeline.persistence.db.connect.
+-- This migration marker keeps deployments auditable.
+-- Version: 001_control_plane

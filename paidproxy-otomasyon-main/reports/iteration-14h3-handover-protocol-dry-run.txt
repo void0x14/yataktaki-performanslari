@@ -1,0 +1,117 @@
+# Iteration 14H3 — handover protocol dry-run
+
+Oluşturulma: 2026-09-06
+İncelenen alan: Canlı VDS worker topology üzerinde gerçek serve + SCM_RIGHTS receive-probe değiş tokuşu. Bu bir cutover değildir.
+
+## Karar
+
+PASS — production serve/receive FD protokolü canlı 10-worker topology üzerinde uçtan uca doğrulandı. Yeni receiver gerçek manifest doğrulamasını çalıştırdı, 20 FD aldı, inode kimliklerini doğruladı, normal adoption ACK gönderdi ve stream byte'ı tüketmeden tüm kopyaları kapattı. Broker ACK sonrası held duplicate FD'leri kapattı ve socket'i sildi.
+
+14I cutover yetkisi çıkarılmadı.
+
+## Source
+
+- services/agentd/supervisor.py
+  - local SHA256: 591d5a9ac83ae127edd68df800a84b3cd3a8a763d5813c14ec81aa4569005315
+  - VDS SHA256: 591d5a9ac83ae127edd68df800a84b3cd3a8a763d5813c14ec81aa4569005315
+  - receiver öncesi handover alımı ve validation tamamlanmadan 8787 bind edilmez
+  - adopted running/paused/stopping handle'lar mevcut stream reader'a bağlanır
+  - stale, devralınmamış transitional PID için gelecekte unknown/recovery_required uzlaştırması hazır
+- services/agentd/handover.py
+  - local SHA256: 4d1b6f1f62d6fb54200ec09ca209d92c53c72e16bd0cdcaeadc8363585bf9cd4
+  - VDS SHA256: 4d1b6f1f62d6fb54200ec09ca209d92c53c72e16bd0cdcaeadc8363585bf9cd4
+  - receiver manifest state equality zorunlu
+  - receive-probe yalnız socket/SCM_RIGHTS/manifest fstat doğrulaması yapar; worker stream'i okumaz ve supervisor başlatmaz
+
+## Baseline topology
+
+- agentd: PID 63887, PGID 63887
+- evidence: PID 79382, PGID 79382
+- Sway: PID 79390
+- wayvnc: PID 79396
+- surface: PID 79397
+- workers: PID/PGID 64597, 64602, 64614, 64639, 64654, 64656, 64658, 64660, 64663, 64675
+- persisted state candidate rows: 11
+- live matching handover candidates: 10
+- stale persisted transitional row: ajan-10c9647a6eb94b50 / PID 64117, state stopping, /proc absent
+- event seq before: 1956
+- passive evidence: wf-recorder aktif
+
+## Successful exchange
+
+- broker PID: 84050
+- socket: /home/mani/paidproxy-otomasyon/var/agentd/handover-14h3.sock
+- manifest mode: serve
+- manifest version: 1
+- manifest id: handover-84050-1788654979967634310
+- candidate set at serve: 10 live workers
+- candidate set at receive: 10 live workers
+- SCM_RIGHTS FD count: 20
+- worker count: 10
+- stream count: 20
+- inode validation: true
+- state equality: true
+- PID 64639 present: true
+- PID 64639 state: stopping
+- PID 64639 starttime: 17877093
+- PID 64639 stdout pipe inode: 1849636, old agentd FD: 32
+- PID 64639 stderr pipe inode: 1849637, old agentd FD: 34
+- STREAM_BYTES_READ: 0
+- adoption ACK: received and accepted
+- broker exit status: 0
+- receive-probe exit status: 0
+- socket cleanup: complete, socket absent after ACK
+- held duplicate cleanup: complete
+
+All ten workers had exact PID/PGID/starttime identity and both stdout/stderr pipes. The manifest state for PID 64639 remained stopping; it was not resumed, normalized, signalled or marked killed.
+
+## Stale transitional reconciliation preview
+
+PID 64117 belongs to persisted ajan-10c9647a6eb94b50 and is recorded as stopping, but /proc/64117/stat is absent. It was omitted from the live manifest because no process exists. During a future successful supervisor handover, the new supervisor will conservatively mark this non-adopted record unknown and append recovery_required with previous state/PID/PGID in handover_reconciliation. It will fail startup instead if that exact PID is present.
+
+No state mutation was made during this dry-run.
+
+## Continuity
+
+Final read-only observation:
+
+- agentd PID 63887 unchanged
+- evidence PID 79382 unchanged
+- Sway PID 79390 unchanged
+- wayvnc PID 79396 unchanged
+- surface PID 79397 unchanged
+- all ten worker PID/PGID/starttime values unchanged
+- event seq after: 1956; no new event was produced during the exchange, so no event loss or mutation is claimed
+- passive wf-recorder remained active and rotated normally; final observed recorder PID 84068
+- no SIGPIPE observed
+- no worker exit induced
+- no evidence/display process change
+- broker PID 84050 exited normally
+- handover socket absent
+
+## First attempt record
+
+An initial receiver launch raced the broker socket creation and returned a real FileNotFoundError before connecting. The temporary broker PID 83993 was then terminated and its exact temporary socket was removed. The successful run above used readiness detection and completed with both sides exit status 0. No agentd or worker signal was sent in either attempt.
+
+## Explicit non-actions
+
+AGENTD_RESTART=false
+AGENTD_SIGNAL=false
+WORKER_SIGNAL=false
+SUPERVISOR_REPLACEMENT=false
+PORT_8787_REBIND=false
+14I_CUTOVER=false
+HANDOVER_SERVE_EXECUTED=true (dry-run broker only; no cutover)
+WORKER_RESTART=false
+EVIDENCE_RESTART=false
+TESTS=false (user instruction)
+BUILD=false
+LINT=false
+MOCK=false
+XVFB=false
+OFFSCREEN=false
+NEW_AGENT=false
+
+## Cutover gate
+
+14H3 proves the FD broker/receiver protocol and removes the specific handover inventory gaps. It does not prove the actual agentd replacement, systemd kill policy transition, event continuity through replacement, or production LiveVncViewer. Those remain a separate 14I plan and have not been executed.

@@ -1,0 +1,149 @@
+PAIDPROXY ITERATION 14G — AGENTD EXECUTOR STARVATION
+========================================================
+
+Date
+----
+2026-09-05 UTC
+
+İncelenen alan
+-----
+A1 runtime proof from the real VDS agentd process, followed by a local-only
+source fix. No VDS source deployment and no service restart were allowed.
+
+14F command evidence
+--------------------
+Read-only inspection of:
+  /home/mani/paidproxy-otomasyon/var/agentd/events.jsonl
+
+The 14F official native-app display_select is present:
+
+  seq: 1953
+  timestamp: 2026-09-05T23:36:34.842+00:00
+  event_type: command_received
+  operator_action: display_select
+  request_id: request-524138ca77274f19
+  error: null
+
+No matching command_completed or error event exists for this request through
+the latest event journal read at 2026-09-05T23:46:50Z. A second display_select
+event at 23:42:11.223Z was outside the 14F observer window and was not used
+for this proof.
+
+A1 branch
+---------
+A1 is proven: command_received(display_select) exists, but the matching
+completion/error does not appear before the client timeout. The request is
+accepted by the running agentd command path and remains incomplete.
+
+Runtime evidence from VDS
+-------------------------
+Observed from the live PID 63887 without ptrace, gdb, injection, signals, or
+scheduling changes:
+
+  agentd PID: 63887
+  Python: 3.13.5
+  CPU count: 2
+  /proc/63887/status Threads: 7
+  ps -L executor-like threads:
+    main thread: do_epoll_wait
+    3 threads: pipe_read
+    3 threads: do_wait
+
+A separate /usr/bin/python3 process reported:
+  default ThreadPoolExecutor max_workers: 6
+
+At the same observation:
+  running worker processes: 10
+  source-required persistent jobs: up to 3 per worker
+    stdout.readline
+    stderr.readline
+    process.wait
+  maximum persistent worker blocking jobs: 30
+  default executor capacity: 6
+
+Source mapping
+--------------
+services/agentd/supervisor.py currently creates three long-lived tasks per
+worker at the worker start boundary:
+  _read_worker_stream(... stdout)
+  _read_worker_stream(... stderr)
+  _watch_process(handle)
+
+The stream reader uses asyncio.to_thread(stream.readline).
+The process watcher uses asyncio.to_thread(handle.process.wait).
+The display path uses asyncio.to_thread(select_display_agent, ...).
+
+This explains the observed boundary: agentd records command_received, but the
+display handler's default-executor work cannot start while the default pool is
+occupied by persistent worker pipe/read and wait jobs.
+
+Starvation verdict
+------------------
+PROVEN.
+
+The verdict uses both required parts:
+  1. the real 14F command_received with no matching completion/error, and
+  2. live agentd thread/wchan evidence showing all six default executor
+     threads blocked in pipe/read or wait-like operations, while the
+     independent default executor reports capacity six.
+
+Local-only source fix
+---------------------
+Changed only:
+  services/agentd/supervisor.py
+
+Local SHA-256 after change:
+  5e09904ac1ba18a22af215240fcf4271f99d3e8fb934d2ebb23534ea68134ca6
+
+The fix adds a supervisor-owned ThreadPoolExecutor with:
+  max_workers=32
+  thread_name_prefix=paidproxy-worker-io
+
+Only the persistent worker operations are routed to it:
+  stream.readline in _read_worker_stream
+  handle.process.wait in _watch_process
+
+Short control/evidence operations remain on the default executor, including
+select_display_agent, wait_for_display_render, evidence reads/acks, revoke,
+and restore operations. Worker event payloads, ordering, process/PGID
+lifecycle, mailbox format, and protocol are unchanged.
+
+Deployment state
+----------------
+DEPLOYED_TO_VDS=false
+
+No file was synced to VDS after the local source edit.
+No service was restarted or signalled.
+
+The running VDS state after inspection remained:
+  agentd: 63887
+  evidence: 79382
+  Sway: 79390
+  wayvnc: 79396
+  active wf-recorder observed: 82158
+  workers: same ten PID/PGID pairs from the 14E/14F baseline
+
+Deployment is intentionally withheld because the agentd unit reports:
+  KillMode=control-group
+
+The current supervisor recovery code changes persisted running/paused agents
+to unknown and does not adopt their existing WorkerHandles or stdout/stderr
+pipes. Replacing PID 63887 now could terminate or sever the live worker
+visibility chain. A separate runtime-handover decision is required before
+loading this source patch.
+
+Explicit exclusions
+-------------------
+No tests.
+No build.
+No lint.
+No compile.
+No mock or fixture.
+No Xvfb or offscreen.
+No new agent.
+No worker restart.
+No agentd restart.
+No evidence/Sway/wayvnc restart.
+No signal or injection into agentd.
+No timeout inflation.
+No VDS source deployment.

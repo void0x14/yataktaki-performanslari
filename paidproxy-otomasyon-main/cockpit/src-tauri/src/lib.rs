@@ -18,10 +18,9 @@ fn project_root() -> PathBuf {
     }
     for dir in &dirs {
         for ancestor in dir.ancestors() {
-            // Önce gerçek proje kökü: desktop/tauri_bridge.py + desktop/app/ birlikte olmalı.
-            // cockpit/desktop gölgesi silindi; yalnız başına tauri_bridge.py yetmez.
-            if ancestor.join("desktop/tauri_bridge.py").exists()
-                && ancestor.join("desktop/app/agentd_client.py").exists()
+            // Tauri runtime assets live beside the cockpit source tree.
+            if ancestor.join("cockpit/bridge/tauri_bridge.py").exists()
+                && ancestor.join("cockpit/bridge/agentd_client.py").exists()
             {
                 return ancestor.to_path_buf();
             }
@@ -68,7 +67,7 @@ fn bridge_call(request: Value) -> Result<Value, String> {
     if need_spawn {
         let root = project_root();
         let mut child = Command::new(venv_python(&root))
-            .arg(root.join("desktop/tauri_bridge.py"))
+            .arg(root.join("cockpit/bridge/tauri_bridge.py"))
             .arg("--loop")
             .current_dir(&root)
             .stdin(Stdio::piped())
@@ -132,7 +131,7 @@ fn spawn_watcher(app: &AppHandle, remote_port: u16) -> Result<(), String> {
     }
     let root = project_root();
     let mut child = Command::new(venv_python(&root))
-        .arg(root.join("desktop/vnc_live_bridge.py"))
+        .arg(root.join("cockpit/bridge/vnc_live_bridge.py"))
         .current_dir(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -349,7 +348,7 @@ fn fetch_frame(agent_id: String, frame_ref: String) -> Result<Value, String> {
     }
     let root = project_root();
     let script = format!(
-        "import json,sys;sys.path.insert(0, {root:?});from desktop.app.artifacts import ArtifactCache;from desktop.app.vds import VDSConfig;cache=ArtifactCache(VDSConfig());path=cache.fetch({ref:?}, {agent:?});print(json.dumps({{'path': str(path)}}))",
+        "import json,sys;sys.path.insert(0, {root:?});from cockpit.bridge.artifacts import ArtifactCache;from cockpit.bridge.vds import VDSConfig;cache=ArtifactCache(VDSConfig());path=cache.fetch({ref:?}, {agent:?});print(json.dumps({{'path': str(path)}}))",
         root = root,
         ref = frame_ref,
         agent = agent_id,

@@ -1,0 +1,48 @@
+# Iteration 17D — provider account/access recovery
+
+Date: 2026-09-06
+İncelenen alan: Existing provider accounts only. No credential creation, replacement, or service restart.
+
+## Live account evidence
+
+- OpenRouter `GET /api/v1/key`: HTTP 200.
+- OpenRouter account reports `is_free_tier=true`, limit `2000`, remaining `2000`, usage `0.198551142`.
+- One and only one OpenRouter router request was made using `openrouter/free`: HTTP 429 Too Many Requests.
+- No further OpenRouter chat request was made in this iteration.
+- NVIDIA `GET /v1/models`: HTTP 200, 81 model IDs.
+- Configured NVIDIA model `nvidia/nemotron-nano-3-30b-a3b` is present in the live model list.
+- Two live NVIDIA chat candidates were used, both selected from that live list:
+  - `nvidia/nemotron-nano-3-30b-a3b`: HTTP 404 Not Found.
+  - `nvidia/nemotron-3.5-lightning-30b-a3b`: HTTP response reached production parser, but parser returned `ProviderOutputError: provider message has no JSON object`; no valid decision.
+- DeepSeek HTTP 402 Payment Required from 17C remains an external account/payment block; it was not retried.
+- No provider reached HTTP 200 plus a parseable real decision.
+- No model field was changed because there was no successful selection.
+- No fresh canary was created or started.
+- No final `HavuzBeyni().decide()` production gate was run because no provider candidate passed the required gate.
+
+## Identity postcheck
+
+- Worker snapshot before: 11 processes.
+- Worker snapshot after: 11 processes.
+- PID/PGID/starttime/fd1/fd2 changes: none.
+- New worker PIDs: none.
+- agentd MainPID: `91953`.
+- Pus-4541 PID: `115203`, state `Ts` (paused).
+
+## Acceptance
+
+BLOCKED_EXTERNAL_PROVIDER_ACCESS=true
+SELECTED_PROVIDER=
+SELECTED_MODEL=
+PROXY_PUBLISHED=false
+CREDENTIAL_CHANGED=false
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+MOCK=false
+TESTS=false
+SYNTHETIC_RESULT=false
+
+Result: the existing provider accounts do not currently yield one parseable real AI decision. No proxy scan was started and no proxy result was represented as complete. Further progress requires an externally usable provider/account state; no credential or billing action was taken.

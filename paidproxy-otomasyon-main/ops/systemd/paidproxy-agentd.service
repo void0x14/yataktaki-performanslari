@@ -1,0 +1,28 @@
+[Unit]
+Description=PaidProxy VDS agent supervisor
+After=network-online.target paidproxy-evidence.service
+Wants=network-online.target paidproxy-evidence.service
+
+[Service]
+Type=simple
+User=mani
+WorkingDirectory=/home/mani/paidproxy-otomasyon
+Environment=XDG_RUNTIME_DIR=/run/paidproxy-wayland
+Environment=WAYLAND_DISPLAY=paidproxy-wayland
+Environment=PAIDPROXY_WAYLAND_RUNTIME_DIR=/run/paidproxy-wayland
+Environment=PAIDPROXY_WAYLAND_DISPLAY=paidproxy-wayland
+ExecStart=/usr/bin/python3 -m services.agentd --root /home/mani/paidproxy-otomasyon/var/agentd --host 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mani/paidproxy-otomasyon/var
+ReadWritePaths=/run/paidproxy-wayland
+KillMode=control-group
+TimeoutStopSec=15
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

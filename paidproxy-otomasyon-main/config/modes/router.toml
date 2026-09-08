@@ -1,0 +1,10 @@
+name = "router"
+type = "router"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+role = "decision"
+capability = "decision"

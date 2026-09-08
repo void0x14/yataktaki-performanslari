@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { createElement, Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot } from 'lucide';
 import './styles.css';
+import './observability.css';
+import { checkedResponse, eventCursor, mergeEvents } from './observability';
 
 type Agent = Record<string, any>;
 type EventRow = Record<string, any>;
@@ -10,10 +12,12 @@ const icons: Record<string, any> = { Search, Plus, SlidersHorizontal, Command, M
 const state = {
   agents: [] as Agent[], selected: '', events: [] as EventRow[], owner: 'agent', tool: 'cursor',
   connected: false, liveState: '', frameCount: 0, inspectIndex: -1, inspectDataUrl: '', frameCache: new Map<string, string>(),
+  filter: 'all', eventFilter: 'all', activeTab: 'activity', pending: new Set<string>(),
 };
 let liveFrameQueued: {state?:string;detail?:string;width?:number;height?:number;image?:string;seq?:number} | null = null;
 let lastMouseSend = 0;
 let refreshing = false;
+let replaying = false;
 
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const icon = (name: string, size=15) => `<i data-lucide="${name}" style="width:${size}px;height:${size}px"></i>`;
@@ -30,13 +34,13 @@ const category = (e: EventRow) => {
 const selected = () => state.agents.find(a => a.agent_id === state.selected);
 const humanControl = () => state.owner === 'human' && state.liveState === 'LIVE';
 
-async function call(command: string, payload: Record<string, unknown> = {}) {
+async function call(command: string, payload: Record<string, unknown> = {}, quiet=false) {
   // Tıklama anında tepki ver: düğme hemen basılmış görünür, sonuç sonra gelir.
-  setStatus(`${command} · gönderildi`);
-  const timer = window.setTimeout(()=>setStatus(`${command} · VDS yanıtı bekleniyor (uzun sürerse pencere kilitlenmez)`), 1500);
+  if(!quiet)setStatus(`${command} · gönderildi`);
+  const timer = window.setTimeout(()=>{if(!quiet)setStatus(`${command} · VDS yanıtı bekleniyor (uzun sürerse pencere kilitlenmez)`);}, 1500);
   try {
-    const result = await invoke<any>('agentd', { command, payload });
-    setStatus(`${command} · tamamlandı`);
+    const result = checkedResponse(await invoke<any>('agentd', { command, payload }));
+    if(!quiet)setStatus(`${command} · tamamlandı`);
     return result;
   } catch (error) {
     setStatus(`Bağlantı hatası · ${String(error)}`, true);
@@ -60,10 +64,10 @@ function appShell() {
         <label class="search">${icon('Search')}<input id="agent-search" placeholder="Ajan ara..."/></label>
         <div class="filters"><button class="active" data-filter="all">Tümü</button><button data-filter="running">Çalışıyor</button><button data-filter="paused">Bekleyen</button><button data-filter="failed">Hata</button></div>
         <div class="agent-list" id="agent-list"><div class="empty-list">VDS ajanları bekleniyor</div></div>
-        <nav class="rail-tools"><small>ARAÇLAR</small><button data-action="palette">${icon('Command')} Komut Paleti <kbd>Ctrl K</kbd></button><button data-tab="terminal">${icon('Terminal')} Terminal</button><button data-tab="evidence">${icon('Folder')} Dosyalar</button></nav>
+        <nav class="rail-tools"><small>ARAÇLAR</small><button data-action="palette">${icon('Command')} Komut Paleti <kbd>Ctrl K</kbd></button><button data-tab="evidence">${icon('Folder')} Dosyalar</button></nav>
       </aside>
       <section class="main-column">
-        <div class="view-tabs"><button class="active">${icon('Monitor')} Canlı VDS</button><button data-tab="terminal">${icon('Terminal')} Terminal</button><button data-tab="evidence">${icon('Folder')} Dosyalar</button><button>${icon('Globe')} Tarayıcı</button><button>${icon('Cpu')} Sistem</button><span id="display-state">● HAZIR</span></div>
+        <div class="view-tabs"><button class="active" data-tab="live">${icon('Monitor')} Canlı VDS</button><button data-tab="evidence">${icon('Folder')} Kanıtlar</button><span id="display-state">● HAZIR</span></div>
         <div class="viewport" id="viewport" tabindex="0">
           <div class="browser-chrome"><span></span><span></span><span></span><div id="target-url">VDS görüntüsü bekleniyor</div></div>
           <div class="screen" id="screen"><img id="live-frame" alt="" hidden/><div class="screen-empty" id="screen-empty"><b>CANLI VDS</b><span id="screen-note">Gerçek WayVNC görüntüsü bekleniyor</span></div><div class="agent-cursor" id="agent-cursor">◆<em>AJAN</em></div><div class="human-cursor" id="human-cursor">↖<em>SİZ</em></div><div class="bonk" id="bonk">BONK!</div></div>
@@ -74,15 +78,16 @@ function appShell() {
         </div>
         <section class="replay"><div class="replay-head"><b>FRAME / REPLAY</b><span id="replay-position">Kayıt yok</span><div><button data-action="prev">${icon('ChevronLeft')}</button><button data-action="next">${icon('ChevronRight')}</button><button data-action="live" class="live-button">● Canlıya dön</button></div></div><div class="frame-strip" id="frame-strip"><div class="empty-frame">Gerçek frame event'i bekleniyor</div></div><input id="scrub" type="range" min="0" max="0" value="0"/></section>
         <section class="workspace">
-          <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button><button data-tab="terminal">Terminal</button><button data-tab="notes">Notlar</button></div>
-          <div class="workspace-body"><div class="activity-pane"><div class="event-filters"><button class="active">Tümü</button><button>Düşünce</button><button>Eylem</button><button>Araç</button><button>Hata</button></div><div id="event-list" class="event-list"><div class="empty-event">Bir ajan seçildiğinde gerçek olay akışı burada görünür.</div></div></div><aside class="inspector"><div class="inspector-tabs"><b>Görüntü</b><span>Ham Veri</span><span>Analiz</span></div><div class="preview" id="preview"><img id="preview-img" alt="" hidden/><span id="preview-text">FRAME ÖNİZLEMESİ</span></div><dl id="metadata"><div><dt>Zaman</dt><dd>—</dd></div><div><dt>Eylem</dt><dd>—</dd></div><div><dt>Ajan</dt><dd>—</dd></div><div><dt>Dosya</dt><dd>—</dd></div></dl></aside></div>
+          <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button></div>
+          <div class="workspace-body"><div class="activity-pane"><div class="event-filters"><button class="active" data-event-filter="all">Tümü</button><button data-event-filter="thinking">Düşünce</button><button data-event-filter="intervention">Eylem</button><button data-event-filter="tool">Araç</button><button data-event-filter="error">Hata</button></div><div id="event-list" class="event-list"><div class="empty-event">Bir ajan seçildiğinde gerçek olay akışı burada görünür.</div></div></div><aside class="inspector"><div class="inspector-tabs"><b>Görüntü</b><span>Ham Veri</span><span>Analiz</span></div><div class="preview" id="preview"><img id="preview-img" alt="" hidden/><span id="preview-text">FRAME ÖNİZLEMESİ</span></div><dl id="metadata"><div><dt>Zaman</dt><dd>—</dd></div><div><dt>Eylem</dt><dd>—</dd></div><div><dt>Ajan</dt><dd>—</dd></div><div><dt>Dosya</dt><dd>—</dd></div></dl></aside></div>
         </section>
       </section>
       <aside class="control-panel">
         <div class="control-head"><div class="avatar">✦</div><div><small>SEÇİLİ AJAN</small><h2 id="detail-name">Ajan seçilmedi</h2><p id="detail-id">—</p></div><span class="state-pill" id="detail-state">OFFLINE</span></div>
         <section class="goal"><header><span>HEDEF</span><b id="progress">—</b></header><p id="goal">Ajan hedefi bekleniyor.</p><div class="progress"><i id="progress-bar"></i></div></section>
-        <section class="facts"><label>MEVCUT ADIM</label><p id="current-step">—</p><label>SON EYLEM</label><p id="last-action">—</p><label>ENGEL / SEBEP</label><p class="blocker" id="blocker">Engel bildirilmedi</p></section>
-        <section class="actions"><label>AKSİYONLAR</label><div class="action-grid"><button data-command="viewport">${icon('Eye')} Gözlemle</button><button data-action="retry">${icon('RotateCcw')} Yeniden Dene</button><button data-action="plan">${icon('GitBranch')} Planı Değiştir</button><button data-action="take" class="take">${icon('MousePointerClick')} Kontrolü Al</button><button data-command="hard_kill" class="danger">${icon('Square')} Durdur</button><button data-command="pause">${icon('Pause')} Duraklat</button></div></section>
+        <section class="facts"><label>ŞU AN NEREDE</label><p id="where-looking">Henüz gerçek hedef/kaynak seçilmedi.</p><label>NEDEN / İLK DİŞ</label><p id="why-first-bite">Henüz koku veya ilk diş kanıtı yok.</p><label>KAN / LİSTEDE</label><p id="blood-list">Henüz L7 + gerçek çıkış kanıtı yok; doğrulanmış liste boş.</p><label>MEVCUT ADIM</label><p id="current-step">—</p><label>SON EYLEM</label><p id="last-action">—</p><label>ENGEL / SEBEP</label><p class="blocker" id="blocker">Engel bildirilmedi</p></section>
+        <section class="actions"><label>AKSİYONLAR</label><div class="action-grid"><button data-command="viewport">${icon('Eye')} Gözlemle</button><button data-command="start">${icon('Radio')} Başlat</button><button data-command="resume">${icon('RotateCcw')} Devam Et</button><button data-action="retry">${icon('RotateCcw')} Yeniden Dene</button><button data-action="redirect">${icon('GitBranch')} Yönlendir</button><button data-action="take" class="take">${icon('MousePointerClick')} Kontrolü Al</button><button data-command="pause">${icon('Pause')} Duraklat</button><button data-command="hard_kill" class="danger">${icon('Square')} Durdur</button><button data-command="destroy" class="danger">${icon('Square')} Yok Et</button></div></section>
+        <section class="proxy-results"><header><label>DOĞRULANMIŞ ÇIKIŞLAR</label><b id="proxy-count">0</b></header><div id="proxy-list" class="proxy-list"><div class="empty-event">Gerçek L7 + çıkış kanıtı bekleniyor.</div></div><button id="proxy-export" data-action="proxy-export" class="proxy-export">Export doğrulanmış liste</button></section>
         <section class="quick"><label>HIZLI KOMUTLAR</label><div><button data-instruction="Sayfayı yenile ve sonucu gözlemle.">Sayfayı yenile</button><button data-instruction="İşaretli hedefe tıkla.">Tıkla</button><button data-instruction="Klavye girdisini doğrula.">Yaz</button><button data-instruction="Sayfayı kontrollü biçimde kaydır.">Kaydır</button><button data-command="viewport">${icon('Camera')} Görüntü al</button></div></section>
         <section class="composer"><label>AJANI UYAR</label><div><textarea id="instruction" placeholder="Bu ajana ne yapacağını söyle..."></textarea><button data-action="send">${icon('Send')}</button></div></section>
         <div class="owner"><span>KONTROL</span><b id="owner">AJAN</b><button data-action="return">Ajana geri ver</button></div>
@@ -91,6 +96,14 @@ function appShell() {
     <footer id="status">VDS bağlantısı kuruluyor…</footer>
   </main>
   <div class="palette" id="palette"><div><b>KOMUT PALETİ</b><kbd>ESC</kbd></div><input placeholder="Komut ara..." autofocus/><button data-action="select">Ajan seç</button><button data-command="viewport">Observe</button><button data-command="pause">Pause</button><button data-command="hard_kill">Stop</button><button data-action="retry">Retry</button><button data-action="take">Kontrolü al</button><button data-action="return">Ajana geri ver</button><button data-command="replay">Replay aç</button><button data-tab="evidence">Evidence aç</button><button data-action="focus-command">Komut gönder</button></div>`;
+  const inspector=document.querySelector<HTMLElement>('.inspector')!;
+  inspector.querySelector('.inspector-tabs')!.innerHTML='<b>Görüntü</b>';
+  inspector.insertAdjacentHTML('beforeend','<details class="event-details"><summary>Seçili olayın ham verisi</summary><pre id="raw-event" class="raw-event">Olay seçilmedi.</pre></details>');
+  text('display-state','● GÖRÜNTÜ BEKLENİYOR');
+  document.querySelector('#live-pill')!.innerHTML='<i></i> Görüntü bekleniyor';
+  const recording=document.querySelector('#live-pill')!.nextElementSibling;
+  if(recording)recording.textContent='Kayıt durumu doğrulanmadı';
+  document.querySelector<HTMLElement>('#agent-cursor')!.hidden=true;
   bind(); refreshIcons();
 }
 
@@ -98,19 +111,121 @@ function refreshIcons(){ document.querySelectorAll('i[data-lucide]').forEach(i =
 
 function renderAgents() {
   const list=document.querySelector('#agent-list')!; const query=(document.querySelector<HTMLInputElement>('#agent-search')?.value||'').toLowerCase();
-  const agents=state.agents.filter(a => `${a.pet?.name||''} ${a.label||''} ${a.agent_id}`.toLowerCase().includes(query));
+  const agents=state.agents.filter(a => {
+    const matchesQuery = `${a.pet?.name||''} ${a.label||''} ${a.agent_id}`.toLowerCase().includes(query);
+    const matchesFilter = state.filter === 'all'
+      || (state.filter === 'running' && ['running','working','active'].includes(String(a.state).toLowerCase()))
+      || (state.filter === 'paused' && ['paused','waiting','pending'].includes(String(a.state).toLowerCase()))
+      || (state.filter === 'failed' && ['failed','error','blocked'].includes(String(a.state).toLowerCase()));
+    return matchesQuery && matchesFilter;
+  });
   document.querySelector('#agent-count')!.textContent=String(state.agents.length);
   list.innerHTML=agents.length ? agents.map(a => { const blocked=Boolean(a.blocker); const cls=blocked?'blocked':a.state==='failed'?'error':a.state==='paused'?'manual':a.state; return `<button class="agent ${cls} ${a.agent_id===state.selected?'selected':''}" data-agent="${esc(a.agent_id)}"><span class="agent-avatar">${blocked?'!':'✦'}</span><span><b>${esc(a.pet?.name||a.label||a.agent_id)}</b><small>${esc(a.working_note||a.current_tool||'Görev bekleniyor')}</small></span><em>${esc(a.state||'unknown')}</em></button>`; }).join('') : '<div class="empty-list">VDS ajanları bekleniyor</div>';
   list.querySelectorAll<HTMLElement>('[data-agent]').forEach(el=>el.onclick=()=>selectAgent(el.dataset.agent!));
 }
 
 function renderDetail() {
+  renderProxies();
   const a=selected(); if(!a) return;
   const name=a.pet?.name||a.label||a.agent_id; const current=Number(a.progress?.current||a.progress_current||0), total=Number(a.progress?.total||a.progress_total||0);
-  text('glance-name',name); text('glance-action',a.working_note||a.current_event_type||'İzleniyor'); text('detail-name',name); text('detail-id',`…${String(a.agent_id).slice(-10)} · ${a.kind||'VDS'}`); text('detail-state',String(a.state||'unknown').toUpperCase()); text('goal',a.current_target||a.label||'Hedef bildirilmedi'); text('progress',total?`${current}/${total}`:'—'); text('current-step',a.next_action||a.working_note||'—'); text('last-action',`${a.current_event_type||a.current_tool||'—'} · ${time(a.last_event_timestamp)}`); text('blocker',a.blocker||'Engel bildirilmedi'); text('target-url',a.current_target||'VDS görüntüsü bekleniyor');
+  text('glance-name',name); text('glance-action',a.working_note||a.current_event_type||'İzleniyor'); text('detail-name',name); text('detail-id',`…${String(a.agent_id).slice(-10)} · ${a.kind||'VDS'}`); text('detail-state',String(a.state||'unknown').toUpperCase()); text('goal',a.current_target||a.label||'Hedef bildirilmedi'); text('progress',total?`${current}/${total}`:'—'); text('current-step',a.next_action||a.working_note||'—'); text('last-action',`${a.current_event_type||a.current_tool||'—'} · ${time(a.last_event_timestamp)}`); text('blocker',a.blocker||'Engel bildirilmedi'); text('target-url',a.current_target||'VDS görüntüsü bekleniyor'); renderHuntFacts(a);
   (document.querySelector('#progress-bar') as HTMLElement).style.width=total?`${Math.min(100,current/total*100)}%`:'0%'; renderEvents(); refreshIcons();
 }
-function renderEvents(){ const list=document.querySelector('#event-list')!; const rows=state.events.slice(-250); list.innerHTML=rows.length?rows.slice().reverse().map((e,i)=>`<button class="event ${category(e)}" data-event="${state.events.length-1-i}"><i></i><span><b>${esc(e.event_type||'event')}</b><small>${esc(e.working_note||e.tool||e.target||'Olay kaydı')}</small></span><time>${time(e.timestamp)}</time></button>`).join(''):'<div class="empty-event">Bu ajan için olay kaydı yok.</div>'; list.querySelectorAll<HTMLElement>('[data-event]').forEach(el=>el.onclick=()=>inspect(Number(el.dataset.event))); renderFrames(); }
+function summaryText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object') return '';
+  const row=value as Record<string, unknown>;
+  for (const key of ['working_note','summary','message','result']) {
+    if (typeof row[key] === 'string' && row[key]) return String(row[key]);
+  }
+  return '';
+}
+function firstBite(a: Agent): string {
+  const decision=(a.last_decision&&typeof a.last_decision==='object')?a.last_decision as Record<string,unknown>:{};
+  const tools=Array.isArray(decision.requested_tools)?decision.requested_tools.map(String):[];
+  const targets=Array.isArray(decision.targets)?decision.targets as Record<string,unknown>[]:[];
+  const first=targets[0]||{};
+  const ports=Array.isArray(first.ports)?first.ports.map(Number).filter(Boolean):[];
+  if(tools.includes('browse_public_source')) return 'İlk diş: public-source koku taraması.';
+  if(tools.includes('masscan_liveness')) return ports.length?`İlk diş: L4 tek port ${ports[0]}.`:'İlk diş: L4 tek ilk port; port kanıtı bekleniyor.';
+  if(tools.includes('expand_live_ip')) return 'İlk diş: canlı IP üzerinde doğrudan socket dikeyi.';
+  if(tools.includes('validate_proxy')) return 'İlk diş: L7 CONNECT/SOCKS ve gerçek çıkış doğrulaması.';
+  return 'İlk diş henüz seçilmedi.';
+}
+function renderHuntFacts(a: Agent) {
+  const last=state.events[state.events.length-1]||{};
+  const where=String(a.current_target||last.target||'').trim();
+  const hypothesis=String(a.hypothesis||'').trim();
+  const result=summaryText(a.last_result_summary);
+  const published=Array.isArray(a.published_proxies)?a.published_proxies.length:0;
+  text('where-looking',where||'Henüz gerçek hedef/kaynak seçilmedi.');
+  text('why-first-bite',[hypothesis,firstBite(a)].filter(Boolean).join(' · ')||'Henüz koku veya ilk diş kanıtı yok.');
+  text('blood-list',published?`Kan var: ${published} doğrulanmış çıkış listede.`:result?`Son gerçek sonuç: ${result} · listede doğrulanmış çıkış yok.`:'Henüz L7 + gerçek çıkış kanıtı yok; doğrulanmış liste boş.');
+}
+function publishedProxies(): Agent[] {
+  const seen = new Set<string>();
+  const out: Agent[] = [];
+  for (const agent of state.agents) {
+    for (const proxy of (Array.isArray(agent.published_proxies) ? agent.published_proxies : [])) {
+      const host = String(proxy?.host || '');
+      const port = Number(proxy?.port || 0);
+      const protocol = String(proxy?.protocol || '');
+      const validationRef = String(proxy?.validation_ref || '');
+      if (!host || !port || !protocol || !validationRef) continue;
+      const identity = `${host}:${port}:${protocol}:${validationRef}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      out.push({...proxy, agent_id: proxy.agent_id || agent.agent_id});
+    }
+  }
+  return out;
+}
+function proxyLine(proxy: Agent): string {
+  return `${proxy.host}:${proxy.port}\t${proxy.protocol}\t${proxy.quality_label || 'unlabeled'}\t${proxy.validation_ref}`;
+}
+function renderProxies() {
+  const list = document.querySelector('#proxy-list');
+  const count = document.querySelector('#proxy-count');
+  if (!list || !count) return;
+  const proxies = publishedProxies();
+  count.textContent = String(proxies.length);
+  list.innerHTML = proxies.length ? proxies.map(proxy => {
+    const line = proxyLine(proxy);
+    return `<article class="proxy-row"><code>${esc(`${proxy.host}:${proxy.port}`)}</code><span>${esc(proxy.protocol)}</span><small>${esc(proxy.quality_label || 'doğrulandı')} · ${esc(proxy.validation_ref)}</small><button class="proxy-copy" data-proxy-copy="${esc(encodeURIComponent(line))}">Kopyala</button></article>`;
+  }).join('') : '<div class="empty-event">Gerçek L7 + çıkış kanıtı bekleniyor.</div>';
+  list.querySelectorAll<HTMLElement>('[data-proxy-copy]').forEach(button => button.onclick = async () => {
+    const value = decodeURIComponent(button.dataset.proxyCopy || '');
+    try {
+      await navigator.clipboard.writeText(value);
+      setStatus('Doğrulanmış proxy panoya kopyalandı');
+    } catch (error) {
+      setStatus(`Kopyalama başarısız · ${String(error)}`, true);
+    }
+  });
+}
+function exportProxies() {
+  const proxies = publishedProxies();
+  if (!proxies.length) return setStatus('Export için doğrulanmış proxy yok', true);
+  const blob = new Blob([proxies.map(proxyLine).join('\n') + '\n'], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `proxies-${new Date().toISOString().slice(0,10)}.txt`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  setStatus(`${proxies.length} doğrulanmış proxy export edildi`);
+}
+function renderEvents(){
+  const list=document.querySelector('#event-list')!;
+  if(state.activeTab==='logs') {
+    list.innerHTML=`<pre class="raw-event">${esc(state.events.map(e=>JSON.stringify(e,null,2)).join('\n\n'))}</pre>`;
+    renderFrames();
+    return;
+  }
+  const rows=state.events.slice(-250).filter(e=>(state.activeTab!=='evidence'||Boolean(e.frame_ref||e.video_ref||e.output_ref||e.evidence_refs?.length))&&(state.eventFilter==='all'||category(e)===state.eventFilter));
+  list.innerHTML=rows.length?rows.slice().reverse().map(e=>{const idx=state.events.indexOf(e); return `<button class="event ${category(e)}" data-event="${idx}"><i></i><span><b>${esc(e.event_type||'event')}</b><small>${esc(e.working_note||e.tool||e.target||'Olay kaydı')}</small></span><time>${time(e.timestamp)}</time></button>`;}).join(''):'<div class="empty-event">Bu filtrede olay yok.</div>';
+  list.querySelectorAll<HTMLElement>('[data-event]').forEach(el=>el.onclick=()=>inspect(Number(el.dataset.event))); renderFrames();
+}
 function frameEvents(){ return state.events.filter(e=>e.frame_ref); }
 function renderFrames(){
   const frames=frameEvents(); const strip=document.querySelector('#frame-strip')!;
@@ -129,37 +244,64 @@ async function frameDataUrl(frameRef:string,agentId:string):Promise<string|undef
 }
 async function loadFrameRef(frameRef:string,purpose:'thumb'|'preview'){
   if(!frameRef||!state.selected) return;
-  try{ const url=await frameDataUrl(frameRef,state.selected);
+  const agentId=state.selected;
+  try{ const url=await frameDataUrl(frameRef,agentId);
+    if(state.selected!==agentId) return;
     if(!url) return;
     if(purpose==='thumb'){ document.querySelectorAll<HTMLImageElement>(`[data-thumb="${CSS.escape(frameRef)}"]`).forEach(img=>{img.src=url;}); }
-    else if(state.inspectDataUrl===frameRef||purpose==='preview'){ const img=document.querySelector<HTMLImageElement>('#preview-img')!; img.src=url; img.hidden=false; const t=document.querySelector<HTMLElement>('#preview-text')!; t.hidden=true; }
-  }catch{ /* artifact alınamadıysa metin önizleme kalır */ }
+    else if(state.inspectDataUrl===frameRef){ const img=document.querySelector<HTMLImageElement>('#preview-img')!; img.src=url; img.hidden=false; const t=document.querySelector<HTMLElement>('#preview-text')!; t.hidden=true; }
+  }catch(error){ if(purpose==='preview'&&state.selected===agentId&&state.inspectDataUrl===frameRef){text('preview-text',`Görüntü alınamadı: ${String(error)}`);document.querySelector<HTMLElement>('#preview-text')!.hidden=false;} }
 }
 function inspect(index:number){
   const e=state.events[index]; if(!e) return;
   state.inspectIndex=index; state.inspectDataUrl=String(e.frame_ref||'');
+  text('raw-event',JSON.stringify(e,null,2));
   text('preview-text',e.frame_ref?'GERÇEK FRAME':'Bu event için frame yok');
   const img=document.querySelector<HTMLImageElement>('#preview-img')!;
   if(e.frame_ref){ img.hidden=true; loadFrameRef(String(e.frame_ref),'preview'); } else { img.hidden=true; }
-  const t=document.querySelector<HTMLElement>('#preview-text')!; t.hidden=Boolean(e.frame_ref);
+  const t=document.querySelector<HTMLElement>('#preview-text')!; t.hidden=false;
   document.querySelector('#metadata')!.innerHTML=`<div><dt>Zaman</dt><dd>${esc(time(e.timestamp))}</dd></div><div><dt>Eylem</dt><dd>${esc(e.event_type)}</dd></div><div><dt>Ajan</dt><dd>${esc(e.agent_id)}</dd></div><div><dt>Dosya</dt><dd>${esc(e.frame_ref||e.video_ref||'—')}</dd></div>`;
   renderFrames();
 }
 async function selectAgent(id:string){
   state.selected=id; state.events=[]; state.inspectIndex=-1; state.inspectDataUrl='';
+  text('raw-event','Olay seçilmedi.');
+  document.querySelector<HTMLImageElement>('#preview-img')!.hidden=true;
   renderAgents(); renderDetail();
   setStatus('Ajan seçildi · olaylar yükleniyor');
   try{ await invoke('set_display_target',{agentId:id}); }catch{}
   // Replay arka planda yüklensin; tıklama hemen tepki versin.
   void (async()=>{
-    try{ const r=await invoke<any>('agentd',{command:'replay',payload:{agent_id:id,after_seq:0}}); if(state.selected!==id) return; state.events=Array.isArray(r.events)?r.events.slice(-250):[]; renderDetail(); setStatus('Olaylar yüklendi'); }catch(err){ setStatus(`Olaylar alınamadı · ${String(err)}`,true); }
+    try{ const r=checkedResponse(await invoke<any>('agentd',{command:'replay',payload:{agent_id:id,after_seq:0}})); if(state.selected!==id) return; state.events=mergeEvents(state.events,Array.isArray(r.events)?r.events:[],id); renderDetail(); setStatus('Olaylar yüklendi'); }catch(err){ if(state.selected===id)setStatus(`Olaylar alınamadı · ${String(err)}`,true); }
   })();
 }
 async function sendInstruction(instruction:string, context:Record<string,unknown>={}){ if(!state.selected||!instruction.trim()) return; const r=await call('intervene',{agent_id:state.selected,instruction,context}); if(r?.intervention_id) setStatus(`Yönlendirme kaydedildi · ${String(r.intervention_id).slice(0,18)}…`); }
 function text(id:string,value:unknown){ const el=document.getElementById(id); if(el) el.textContent=String(value??''); }
 function setStatus(message:string,error=false){ const el=document.querySelector('#status')!; el.textContent=message; el.classList.toggle('error',error); }
 function showPalette(show=true){ document.querySelector('#palette')!.classList.toggle('open',show); }
-function setTab(name:string){ document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',(x as HTMLElement).dataset.tab===name)); }
+function setTab(name:string){
+  state.activeTab=name;
+  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',(x as HTMLElement).dataset.tab===name));
+  document.querySelectorAll<HTMLElement>('[data-panel]').forEach(x=>x.hidden=x.dataset.panel!==name);
+  if(name === 'live') document.querySelector<HTMLElement>('#viewport')?.removeAttribute('hidden');
+  renderEvents();
+  setStatus(`${name} görünümü açıldı`);
+}
+function setFilter(filter:string){
+  state.filter=filter;
+  document.querySelectorAll<HTMLElement>('[data-filter]').forEach(x=>x.classList.toggle('active',x.dataset.filter===filter));
+  renderAgents();
+}
+async function createAgent(){
+  const label=window.prompt('Yeni ajan adı', 'Yeni ajan')?.trim();
+  if(!label) return;
+  try{
+    const result=await call('create',{agent_kind:'gezinme',label,initial_input:''});
+    await refresh();
+    const id=String(result?.agent_id||result?.agent?.agent_id||'');
+    if(id) await selectAgent(id);
+  }catch(err){ setStatus(`Ajan oluşturulamadı · ${String(err)}`,true); }
+}
 function setOwner(owner:'agent'|'human', note:string){
   state.owner=owner; text('owner',owner==='human'?'İNSAN':'AJAN');
   document.querySelector('#viewport')!.classList.toggle('human-control',owner==='human');
@@ -184,10 +326,11 @@ function applyLive(payload:{state?:string;detail?:string;width?:number;height?:n
       state.frameCount=Number(frame.seq||state.frameCount+1);
       text('resolution',`${frame.width||'?'}×${frame.height||'?'}`);
       const lp=document.querySelector('#live-pill')!; lp.classList.add('on');
+      lp.innerHTML='<i></i> Canlı görüntü';
     });
   } else if(payload.state){
     const note=document.querySelector('#screen-note')!; note.textContent=String(payload.detail||'');
-    if(state.liveState!=='LIVE'){ empty.hidden=false; }
+    if(state.liveState!=='LIVE'){ empty.hidden=false;img.hidden=true;const lp=document.querySelector('#live-pill')!;lp.classList.remove('on');lp.innerHTML='<i></i> Görüntü bağlantısı yok'; }
   }
 }
 
@@ -205,14 +348,17 @@ function remotePoint(el:HTMLElement,e:MouseEvent){
   const x=Math.round((e.clientX-rect.left-ox)/scale), y=Math.round((e.clientY-rect.top-oy)/scale);
   return { x:Math.max(0,Math.min(iw-1,x)), y:Math.max(0,Math.min(ih-1,y)), inside:e.clientX-rect.left>=ox&&e.clientX-rect.left<=ox+iw*scale&&e.clientY-rect.top>=oy&&e.clientY-rect.top<=oy+ih*scale };
 }
+const DISPLAY_SELECT_COMMAND = 'display_select';
+const DISPLAY_RELEASE_COMMAND = 'display_release';
+
 async function takeControl(){
   if(!state.selected) return setStatus('Önce ajan seçin',true);
-  try{ await call('display_select',{agent_id:state.selected}); await invoke('vnc_take'); setOwner('human','Kontrol sizde · canlı VDS yüzeyi ve girdiler açık'); }
-  catch(err){ setStatus(`Kontrol alınamadı · ${String(err)}`,true); }
+  try{ await invoke('vnc_take'); setOwner('human',`${DISPLAY_SELECT_COMMAND} · kontrol sizde · canlı VDS yüzeyi ve girdiler açık`); }
+  catch(err){ setStatus(`${DISPLAY_SELECT_COMMAND} başarısız · ${String(err)}`,true); }
 }
 async function releaseControl(){
-  try{ await invoke('vnc_release'); await call('display_release',{}); setOwner('agent','Kontrol ajana geri verildi · canlı yüzey bırakıldı'); }
-  catch(err){ setStatus(`Bırakma hatası · ${String(err)}`,true); }
+  try{ await invoke('vnc_release'); setOwner('agent',`${DISPLAY_RELEASE_COMMAND} · kontrol ajana geri verildi · canlı yüzey bırakıldı`); }
+  catch(err){ setStatus(`${DISPLAY_RELEASE_COMMAND} başarısız · ${String(err)}`,true); }
 }
 async function tencereStrike(e:MouseEvent){
   const rect=(e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -220,6 +366,7 @@ async function tencereStrike(e:MouseEvent){
   const bonk=document.querySelector<HTMLElement>('#bonk')!;
   bonk.style.left=`${e.clientX-rect.left}px`; bonk.style.top=`${e.clientY-rect.top}px`;
   bonk.classList.remove('show'); void bonk.offsetWidth; bonk.classList.add('show');
+  window.setTimeout(()=>bonk.classList.remove('show'),450);
   const instruction='Buraya dikkat et; bu noktadaki hatalı adımı düzelt.';
   await sendInstruction(instruction,{mode:'tencere',coordinate:{x:p.x,y:p.y},current_frame:selected()?.last_frame_ref||null,target_region:{x:Math.max(0,p.x-48),y:Math.max(0,p.y-48),width:96,height:96},operator_instruction:instruction});
   await rfbInput('pointer',{x:p.x,y:p.y,mask:1});
@@ -228,18 +375,30 @@ async function tencereStrike(e:MouseEvent){
 
 function bind(){
   document.querySelector<HTMLInputElement>('#agent-search')!.oninput=renderAgents;
+  document.querySelectorAll<HTMLElement>('[data-filter]').forEach(el=>el.onclick=()=>setFilter(el.dataset.filter||'all'));
+  document.querySelectorAll<HTMLElement>('[data-event-filter]').forEach(el=>el.onclick=()=>{ state.eventFilter=el.dataset.eventFilter||'all'; document.querySelectorAll<HTMLElement>('[data-event-filter]').forEach(x=>x.classList.toggle('active',x===el)); renderEvents(); });
   document.addEventListener('keydown',e=>{ if(e.ctrlKey&&e.key.toLowerCase()==='k'){e.preventDefault();showPalette(!document.querySelector('#palette')!.classList.contains('open'));} if(e.key==='Escape')showPalette(false); });
   document.querySelectorAll<HTMLElement>('[data-tool]').forEach(el=>el.onclick=()=>{state.tool=el.dataset.tool!;document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===el));document.querySelector('#screen')!.className=`screen tool-${state.tool}`; setStatus(`Araç: ${state.tool}`);});
-  document.querySelectorAll<HTMLElement>('[data-command]').forEach(el=>el.onclick=async()=>{ el.classList.add('active'); window.setTimeout(()=>el.classList.remove('active'),300); if(!state.selected)return setStatus('Önce ajan seçin',true); const cmd=el.dataset.command!; setStatus(`${cmd} · gönderildi`); await call(cmd,{agent_id:state.selected,reason:'tauri-cockpit'}); if(cmd==='replay') await selectAgent(state.selected); showPalette(false); });
+  document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach(el=>el.onclick=async()=>{
+    if(!state.selected)return setStatus('Önce ajan seçin',true);
+    const cmd=el.dataset.command!, agentId=state.selected, key=`${agentId}:${cmd}`;
+    if(state.pending.has(key))return;
+    state.pending.add(key);el.disabled=true;el.classList.add('active');
+    try{await call(cmd,{agent_id:agentId,reason:'tauri-cockpit'});if(cmd==='replay'&&state.selected===agentId)await selectAgent(agentId);else await refresh();showPalette(false);}
+    catch{/* call displays the actual rejection. */}
+    finally{state.pending.delete(key);el.disabled=false;el.classList.remove('active');}
+  });
   document.querySelectorAll<HTMLElement>('[data-instruction]').forEach(el=>el.onclick=()=>sendInstruction(el.dataset.instruction!));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach(el=>el.onclick=()=>setTab(el.dataset.tab!));
+  setTab('live');
   document.querySelectorAll<HTMLElement>('[data-action]').forEach(el=>el.onclick=async(e:MouseEvent)=>{
     const action=el.dataset.action!;
-    if(action==='palette') return showPalette(); if(action==='select'){showPalette(false);return document.querySelector<HTMLInputElement>('#agent-search')!.focus();}
+    if(action==='palette') return showPalette(); if(action==='create') return createAgent(); if(action==='select'){showPalette(false);return document.querySelector<HTMLInputElement>('#agent-search')!.focus();}
+    if(action==='proxy-export') return exportProxies();
     if(action==='take') return takeControl();
     if(action==='return') return releaseControl();
     if(action==='retry') return sendInstruction('AI kararını yeniden değerlendir ve bir sonraki gerçek adımı tekrar dene.');
-    if(action==='plan') return sendInstruction('Mevcut planı yeniden değerlendir; hatalı veya eksik adımı düzelterek devam et.');
+    if(action==='redirect') return sendInstruction('Mevcut kanıta göre yönü değiştir; koku, ilk diş ve sonraki gerçek adımı açıkça kaydet.');
     if(action==='send'||action==='focus-command'){const input=document.querySelector<HTMLTextAreaElement>('#instruction')!; if(action==='focus-command'){showPalette(false);input.focus();}else{await sendInstruction(input.value);input.value='';} return;}
     if(action==='fullscreen') document.fullscreenElement?document.exitFullscreen():document.querySelector('#viewport')?.requestFullscreen();
     if(action==='prev'||action==='next'){ if(!state.events.length) return; const cur=state.inspectIndex<0?state.events.length-1:state.inspectIndex; const nxt=action==='prev'?Math.max(0,cur-1):Math.min(state.events.length-1,cur+1); inspect(nxt); return; }
@@ -290,7 +449,7 @@ async function refresh(){
   refreshing=true;
   try{
     // Ağır replay çağrısını ilk açılışta yapma: önce ajan listesi gelsin, ekran dolsun.
-    const r=await call('status');
+    const r=await call('status',{},true);
     state.agents=Array.isArray(r.agents)?r.agents:[];
     state.connected=true;
     const c=document.querySelector('#connection')!; c.textContent='● VDS BAĞLI'; c.classList.add('online');
@@ -298,15 +457,29 @@ async function refresh(){
     const opSel=String(dc.operator_selected_agent||'');
     if(opSel&&opSel!==state.selected){ setStatus(`VDS yüzey seçimi: ${opSel.slice(0,24)}…`); }
     renderAgents(); renderDetail();
-  }catch{ renderAgents(); }
+  }catch{ state.connected=false; const c=document.querySelector('#connection')!;c.textContent='● VDS BAĞLANTISI YOK · son alınan durum';c.classList.remove('online');renderAgents(); }
   finally{ refreshing=false; }
 }
 async function refreshSlow(){
-  // Olay akışı ayrı ve seyrek güncellenir; ekranı kilitlemez.
-  if(!state.selected||refreshing) return;
+  if(!state.selected||replaying) return;
+  const agentId=state.selected;
+  replaying=true;
   try{
-    const r=await invoke<any>('agentd', { command:'replay', payload:{ agent_id:state.selected, after_seq:0 } });
-    if(Array.isArray(r.events)){ state.events=r.events.slice(-250); renderDetail(); }
-  }catch{ /* sessiz geç: liste yine görünür kalır */ }
+    const r=checkedResponse(await invoke<any>('agentd', { command:'replay', payload:{ agent_id:agentId, after_seq:eventCursor(state.events) } }));
+    if(state.selected!==agentId) return;
+    if(Array.isArray(r.events)&&r.events.length){
+      const inspected=state.events[state.inspectIndex]?.event_id;
+      state.events=mergeEvents(state.events,r.events,agentId);
+      state.inspectIndex=inspected?state.events.findIndex(e=>e.event_id===inspected):-1;
+      renderDetail();
+    }
+  }catch(error){ if(state.selected===agentId)setStatus(`Olay akışı kesildi · ${String(error)}`,true); }
+  finally{ replaying=false; }
 }
-appShell(); refresh(); setInterval(refresh,15000); setInterval(refreshSlow,15000);
+appShell();
+// İlk frame tamamen yerleştikten sonra uzak bağlantıyı başlat; açılış ekranı ağ gecikmesine bağlanmaz.
+requestAnimationFrame(() => {
+  void refresh();
+  window.setInterval(refresh,15000);
+  window.setInterval(refreshSlow,1000);
+});

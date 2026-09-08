@@ -1,0 +1,61 @@
+# Iteration 17G — public-source to discovery-intent gate
+
+Date: 2026-09-06
+İncelenen alan: One fresh real VDS canary. Public-source observation was allowed; discovery intent was held; no scanner execution.
+
+## Source
+
+- Changed only `services/agentd/ai_runtime.py`.
+- Local/VDS SHA-256: `84bf9ee06e1170f401142ec53508aea5824ce4221a9b72c5da8478c47f299782`.
+- Canonical port policy is dynamically read from `var/port-araliklari/yuksek.txt` through `bant_listesi()`.
+- The catalog exposes the canonical port-policy source/ranges for masscan and vertical expansion.
+- Port-policy validation rejects malformed or out-of-policy intents without clipping or fallback.
+
+## Real canary
+
+- Created exactly one fresh canary:
+  - agent: `ajan-d6a8a871d2144ca1`
+  - PID: `121227`
+- Real event sequence began with:
+  - `agent_created`: seq `11109`
+  - `process_started`: seq `11114`
+  - `workspace_observed`: seq `11117`
+  - `decision_made`: seq `11137`, provider `nvidia`, model `nvidia/nemotron-3.5-lightning-30b-a3b`
+  - `tool_started/finished(browse_public_source)`: seq `11138-11139`
+- The model chose `https://www.example.com`; VDS fetched it for real with HTTP 200, SHA-256 evidence, and a persistent source artifact.
+- Additional real public-source calls repeated the same source while the model failed to advance to a discovery intent. Across the canary:
+  - 33 decision events;
+  - 16 public-source starts and 16 finishes;
+  - 3 visible contract rejections;
+  - 0 discovery-intent events;
+  - 0 masscan starts;
+  - 0 proxy publications.
+- Some model decisions proposed private CIDRs and invalid port lists, but did not request masscan; no network scan occurred.
+- An incomplete browse decision was visibly rejected: `browse_public_source: arguments dict gerekli`.
+- The canary was paused through agentd RPC at seq `11488`, PID state `Ts`.
+
+## Process protection
+
+- Existing 10 workers were not restarted or signalled.
+- Pus-4541 PID `115203` remained paused.
+- Kor-48b6 PID `118591` remained paused.
+- agentd MainPID remained `91953`.
+- No server, scanner, result path, provider, credential, or canonical port file changed.
+
+## Acceptance
+
+DISCOVERY_INTENT_VALID=false
+DISCOVERY_EXECUTED=false
+MASSCAN_STARTED=false
+PROXY_PUBLISHED=false
+NEW_WORKER=true
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+MOCK=false
+TESTS=false
+SYNTHETIC_RESULT=false
+
+Result: real public-source visibility and fail-close behavior worked; the canary did not reach a valid discovery intent and was paused to prevent an unbounded repeated-observation loop. The next blocker is bounded AI exploration/transition from a successful source observation to a distinct, valid, canonical-port discovery intent.

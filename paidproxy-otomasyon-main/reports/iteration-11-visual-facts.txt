@@ -1,0 +1,31 @@
+# Iteration 11 — Native visual facts
+
+Kaynak: gerçek X11 masaüstü penceresi; offscreen/Xvfb/sentetik görüntü kullanılmadı.
+
+## Mevcut capture kayıtları
+
+- desktop-wide.png: 1785x1030
+- desktop-medium.png: 1440x900
+- Gerçek pencere resize işlemi 1440x900'de uygulandı.
+- Son gözlenen 1440x900 yüzeyinde ajan rail'i ve seçili ajan scroll alanında yatay scrollbar görünmüyordu.
+- Son gözlenen 1440x900 yüzeyinde ana görsel alan sağ tarafta, geçmiş aktivite altta ve kompakt ajan kimlik satırları solda görünüyordu.
+- Her görünür ajan satırında ayrı çizilmiş pet/silüet ve durum noktası bulunuyordu.
+- Seçili ajan pet'i detail modunda, rail pet'i compact modunda aynı kimlik ailesini kullanıyordu.
+- Gerçek VDS yüzeyi backend'den gelen UNAVAILABLE durumunu gösterdi; sahte LIVE frame gösterilmedi.
+- Gerçek frame cache'de olmayan ajan seçildiğinde kanıt alanı açıkça gerçek frame beklediğini gösterdi.
+
+## Bilinçli olarak henüz üretilmeyen capture'lar
+
+- desktop-1366x768.png
+- agent-identity-rail.png
+- selected-agent-workspace.png
+
+Bu capture'lar kullanıcı laptop ekranında yeni pencere/resize/klavye etkileşimi istemediği için yeniden üretilmedi. Sanal VDS Sway/wayvnc yüzeyinde üretilecek sonraki görünürlük kabulüne bırakıldı.
+
+## Bilinen son görsel not
+
+1440x900 capture'ından önce seçili ajan başlığı dar panelde kısalabiliyordu; bunu son X11 başlatmasından önce başlık QLabel'i için Ignored size policy ile düzelttim. Kullanıcı müdahalesi nedeniyle düzeltme sonrası yeni laptop capture'ı alınmadı.
+
+## İncelenen alan sınırı
+
+Bu kayıt native desktop tasarım dilini kapsar. VDS servisleri, ajanlar, tarama, L7, proxy yayını ve kontrol backend'i değiştirilmedi.

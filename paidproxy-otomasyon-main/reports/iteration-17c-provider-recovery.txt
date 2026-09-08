@@ -1,0 +1,47 @@
+# Iteration 17C — real provider diagnosis/recovery
+
+Date: 2026-09-06
+İncelenen alan: VDS operational provider path only. Existing 10 workers, paused Pus-4541, and agentd were preserved.
+
+## Source change
+
+- Changed only `src/proxy_pipeline/agents/ai_havuz.py`.
+- Local SHA-256: `69cac25523d48d995663eea686ee3bb73cb4fdb8a8733508ab7844c05844c00e`.
+- The configuration file is read first in a fresh process; secrets are not printed or copied to logs.
+- `YEREL_AG_GECIDI_URL` is now required together with `YEREL_AG_GECIDI_MODEL`; no implicit `127.0.0.1:8787` HTTP gateway is used.
+- Provider failures now expose only provider-safe HTTP status/reason or error type.
+
+## Live VDS evidence
+
+- Agentd MainPID remained `91953`.
+- The paused canary `ajan-e71746b84c5a4541` / `Pus-4541` remained paused at PID `115203`.
+- Existing 10 workers were not restarted or signalled.
+- Fresh production provider probe returned `RuntimeError: yapay zekâ havuzu yanıt vermiyor`.
+- Real provider statuses:
+  - OpenRouter / `minimax/minimax-m3:free`: HTTP 429 Too Many Requests.
+  - NVIDIA / `nvidia/nemotron-nano-3-30b-a3b`: HTTP 404 Not Found.
+  - DeepSeek / `deepseek-chat`: HTTP 402 Payment Required.
+- OpenRouter live `/models`: 431 total models, 19 `:free` models.
+- Two live alternative chat calls were attempted, without synthetic input or result:
+  - `inclusionai/ling-3.0-flash-sante:free`: HTTP 429 Too Many Requests.
+  - `inclusionai/ling-3.0-flash-fin:free`: HTTP 429 Too Many Requests.
+- No provider produced HTTP 200 plus a parseable decision.
+- No new canary was created because provider recovery did not pass.
+- No `decision_made`, `proxy_published`, or proxy output was produced.
+
+## Acceptance
+
+AI_UNAVAILABLE=true
+SELECTED_PROVIDER=
+SELECTED_MODEL=
+PROXY_PUBLISHED=false
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+MOCK=false
+TESTS=false
+SYNTHETIC_RESULT=false
+
+Result: provider recovery did not pass. The next action remains blocked on a real usable provider response; no proxy scan was started or represented as complete.

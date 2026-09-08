@@ -1,0 +1,77 @@
+{
+  "agents": {
+    "agent-1788880497779-4a5b80": {
+      "agentId": "agent-1788880497779-4a5b80",
+      "agentType": "coordinator",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "provider": "mimo",
+        "model": "mimo-v2.5-pro",
+        "task": "Proxy avı karar planlayıcısı",
+        "timeout": 300,
+        "autoTools": true
+      },
+      "createdAt": "2026-09-08T15:14:57.779Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit",
+      "modelId": "mimo-v2.5-pro"
+    },
+    "agent-1788880509847-6nutar": {
+      "agentId": "agent-1788880509847-6nutar",
+      "agentType": "reviewer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "provider": "gemini-web2api",
+        "model": "gemini-3.5-flash-thinking-lite",
+        "task": "Proxy avı kararlarını bağımsız inceleyen ajan",
+        "timeout": 300,
+        "autoTools": true
+      },
+      "createdAt": "2026-09-08T15:15:09.847Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit",
+      "modelId": "gemini-3.5-flash-thinking-lite"
+    },
+    "agent-1788880666578-9n5ewm": {
+      "agentId": "agent-1788880666578-9n5ewm",
+      "agentType": "coordinator",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "provider": "mimo",
+        "model": "mimo-v2.5-pro",
+        "task": "PaidProxy avı karar planlayıcısı",
+        "timeout": 300,
+        "autoTools": true
+      },
+      "createdAt": "2026-09-08T15:17:46.579Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit",
+      "modelId": "mimo-v2.5-pro"
+    },
+    "agent-1788880666966-9t8aq1": {
+      "agentId": "agent-1788880666966-9t8aq1",
+      "agentType": "reviewer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "provider": "gemini-web2api",
+        "model": "gemini-3.5-flash-thinking-lite",
+        "task": "PaidProxy avı kararlarını bağımsız inceleyen ajan",
+        "timeout": 300,
+        "autoTools": true
+      },
+      "createdAt": "2026-09-08T15:17:46.966Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit",
+      "modelId": "gemini-3.5-flash-thinking-lite"
+    }
+  },
+  "version": "3.0.0"
+}

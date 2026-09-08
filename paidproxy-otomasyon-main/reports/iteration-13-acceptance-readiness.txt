@@ -1,0 +1,12 @@
+# Iteration 13 — acceptance readiness
+
+Bu kayıt yalnızca kaynakta yapılan kapanışları ve sonraki gerçek gözlem sınırını bildirir.
+
+- live_selection: desired_live_agent / inflight_live_agent / active_live_agent ayrımı var; aynı anda tek display_select isteği; eski ajan yanıtı yeni seçimi etkinleştiremez; başarısız istek retry için inflight durumunu bırakır.
+- historical_evidence: seçili event, ref ve medya türü EvidenceTheater içinde korunur; frame metadata seçili event'ten, video immutable durumu finalize provenance'tan gelir.
+- control_truth: request failure command_finished üzerinden agent_id ve command ile ilişkilidir; genel stream/status hatası bekleyen komutları temizlemez; intervention dahil herhangi bir bekleyen komut lifecycle kontrollerini kilitler.
+- responsive_modes: WIDE >= 1500, MEDIUM >= 1100, COMPACT < 1100; COMPACT görseli öne alır ve rail ayrıntılarını daraltır.
+- geometry_report: gerçek uygulama doğal olarak çalıştığında workspace genişlik/yükseklik, mod, splitter yönü, rail, görsel önceliği, composer, history ve scrollbar durumunu yazar.
+- runtime_observation_required: native GUI'nin gerçek kompakt geometride açılması, gerçek RFB framebuffer, ajan değişiminde kimlik/yüzey eşleşmesi ve geçmiş frame/video'nun gözle okunması.
+- next_visual_path: mevcut VDS Sway + wayvnc sanal ekranı üzerinden native uygulamanın gerçek çalışma gözlemi; laptop ekranında pencere açma/taşıma/yeniden boyutlandırma yok.
+- not_performed: test, mock, build, lint, Xvfb/offscreen, sentetik ölçü/evidence, VDS servis veya ajan mutasyonu.

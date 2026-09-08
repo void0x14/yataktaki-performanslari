@@ -1,0 +1,153 @@
+PAIDPROXY ITERATION 14F — DISPLAY_SELECT PHASE TRACE
+=========================================================
+
+Date
+----
+2026-09-05 UTC
+
+Purpose
+-------
+One read-only phase trace around one official native VDS desktop display_select.
+No source change and no service restart were allowed in 14F.
+
+14E leftover forensic read
+-------------------------
+Observed at 2026-09-05T23:33:57Z on VDS.
+
+The C2C path /home/mani/paidproxy-otomasyon/var/agentd/control/ does not
+exist. The live control path is:
+  /home/mani/paidproxy-otomasyon/var/agentd/display-control/
+
+The requested operator mailbox files were inspected read-only:
+  operator-display-request.json: absent
+  operator-display-ack-*.json: 0 matching files
+  operator-selection.json: absent
+
+The live passive evidence files were present and rotating in the same
+display-control directory. No 14E operator ACK with request_id, selection_id,
+status, error, request_age_seconds, or preemption fields remained to identify
+the previous failure.
+
+14F baseline
+------------
+Existing runtime before the official request:
+  paidproxy-agentd.service MainPID: 63887
+  paidproxy-evidence.service MainPID: 79382
+  Sway: 79390
+  wayvnc: 79396
+  evidence surface: 79397
+  effective evidence_control_timeout_seconds: 20
+  operator request: null
+  operator selection: null
+
+The existing worker PID/agent set remained unchanged from the 14E baseline.
+A real passive recorder was active before and during the trace.
+
+Read-only observer
+------------------
+A temporary observer ran on VDS outside project source:
+  observer PID: 80890
+  interval: 30ms
+  duration: 90s
+  report destination: reports/iteration-14f-display-phase-trace.txt
+
+The observer read only:
+  operator request/ACK/selection,
+  capture request/ACK,
+  video owner/selection/revoke,
+  matching /proc process existence/state.
+
+It did not unlink, rename, or rewrite any control file. It appended only its
+own timestamped observations to the report.
+
+One official request
+--------------------
+  native VDS Qt app PID: 80911
+  display: VDS Sway/Wayland virtual screen
+  existing agent: ajan-8639c102a2f34b66
+  display/pet label: Tosba-4b66
+  requested operation: one display_select
+  no second select, no retry, no A-to-B switch, no new agent
+
+Observed phase trace
+--------------------
+  2026-09-05T23:36:24.253Z
+    passive capture-request appeared for ajan-279e72e3da334d14,
+    request_id f1793ee950134b269cc5d6f13db73adf
+
+  2026-09-05T23:36:24.967Z
+    matching passive capture ACK appeared.
+
+  2026-09-05T23:36:56.559Z
+    passive capture-request appeared for ajan-3d4609baf2c2488b,
+    request_id d1f3a38d3b3445c983b5ae4b0fb35e1e.
+
+  2026-09-05T23:37:28.828Z
+    passive capture-request appeared for ajan-bd80defd467e417e,
+    request_id 7b8e651ce6fd42cbb6e97ca5266fc5da.
+
+  2026-09-05T23:37:29.550Z
+    matching passive capture ACK appeared.
+
+  2026-09-05T23:36:56Z–23:38:43Z
+    the observer saw no operator-display-request.json at any sample,
+    no operator-display-ack-*.json, no operator-selection.json, no
+    capture-request caused by operator selection, and no capture ACK caused
+    by operator selection.
+
+  2026-09-05T23:38:48Z
+    real VDS Wayland screenshot showed the native app result:
+    display_select: TimeoutError: timed out
+    The same capture showed VDS connected, 23 agents visible, selected
+    Tosba-4b66, and live VDS surface unavailable.
+
+Desktop/transport phase
+-----------------------
+The app’s visible state requested the existing A agent, but no operator
+mailbox file appeared during the 30ms trace. No operator ACK, selection
+commit, capture request, or capture ACK was produced. No SSH VNC forward
+opened and LiveVncViewer never reached LIVE. No release was issued because
+no operator selection committed.
+
+Cleanup/runtime after request
+----------------------------
+At 2026-09-05T23:39:59Z:
+  native desktop app: closed
+  agentd MainPID: 63887 (unchanged)
+  evidence MainPID: 79382 (unchanged)
+  Sway: 79390
+  wayvnc: 79396
+  active passive wf-recorder: PID 81528
+  passive video owner: ajan-5d2a59df6d3e4a5f
+  operator request: null
+  operator selection: null
+  capture request: null
+
+Final classification
+--------------------
+CLASS 1 — REQUEST NEVER APPEARS.
+
+The read-only trace captured normal passive capture request/ACK traffic and
+captured the official native app process, while the operator mailbox remained
+absent for the entire active request window. Therefore the request stopped
+before it appeared in evidence_display.select_display_agent's operator
+mailbox. The next slice belongs to agentd command dispatch/runtime, not
+another evidence-service patch.
+
+Explicit exclusions
+-------------------
+No source change.
+No service restart.
+No tests.
+No build.
+No lint.
+No compile.
+No mock or fixture.
+No Xvfb or offscreen rendering.
+No new agent.
+No worker restart.
+No agentd restart.
+No protocol migration.
+No timeout inflation.
+All screenshots came from the VDS Sway/Wayland virtual display, never from
+the laptop.

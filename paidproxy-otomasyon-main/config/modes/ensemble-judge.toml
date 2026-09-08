@@ -1,0 +1,10 @@
+name = "ensemble-judge"
+type = "ensemble_judge"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+agents = ["ranker_a", "ranker_b"]
+judge = "judge"

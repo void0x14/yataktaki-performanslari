@@ -1,0 +1,9 @@
+name = "single-agent"
+type = "single_agent"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+roles = ["decision"]

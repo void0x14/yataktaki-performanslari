@@ -1,0 +1,63 @@
+# Iteration 17H-R2 — bounded discovery intent
+
+Oluşturulma: 2026-09-06
+İncelenen alan: Düzeltilmiş `services/agentd/ai_runtime.py` ile tek fresh VDS canary üzerinde gerçek source→intent faz akışı.
+
+## Uygulanan değişiklik
+
+- `_register_tools()` `AgentRuntime.__init__()` içinde geri getirildi.
+- `masscan_liveness` CIDR doğrulaması yalnız IPv4 ve publicly routable/global ağları kabul edecek şekilde sıkılaştırıldı.
+- Önceki 17H faz kilidi, kaynak kanıtı zorunluluğu, 3/4 karar bütçeleri ve no-scan intent hold korunmuştur.
+- Local/VDS SHA-256: `ae4ebc67bbdd1aab3ed3e4c22fa46e029bc72de520fd9b40bb4454abc16f93df`.
+- agentd restart edilmedi; mevcut worker'lar restart edilmedi.
+
+## Gerçek VDS kanıtı
+
+Canary: `ajan-5679369d46da4117`
+PID: `123535`
+Son durum: `paused`
+Son event seq: `12982`
+
+Source fazı:
+- SOURCE_SUCCESS_COUNT=1
+- SOURCE_DECISION_ATTEMPTS=1
+- AI'nin seçtiği gerçek URL: `https://www.whatismyip.com/`
+- HTTP 200, 297553 bayt, SHA-256 ve kalıcı evidence ref üretildi.
+- `decision_phase_changed` ile source→intent geçişi gerçekleşti.
+- POST_SOURCE_BROWSE_STARTS=0
+- POST_SOURCE_OBSERVE_STARTS=0
+
+Intent fazı:
+- INTENT_DECISION_ATTEMPTS=4
+- AI dört turda geçerli discovery intent üretemedi.
+- Private/non-global CIDR ve faz kilidi kararları production validator tarafından handler çalışmadan reddedildi.
+- DISCOVERY_INTENT_VALID=false
+- DISCOVERY_INTENT_BLOCKED=true
+- DISCOVERY_EXECUTED=false
+- MASSCAN_STARTED=false
+- PROXY_PUBLISHED=false
+
+## Korunan süreçler
+
+- agentd MainPID 91953 korunmuştur.
+- Önceden çalışan 10 worker korunmuştur.
+- Pus-4541, Kor-48b6, 17G canary ve ilk 17H canary paused/korunmuştur.
+- Yalnız 17H-R2 canary oluşturulmuş ve sonrasında pause edilmiştir.
+
+## Sınırlar
+
+REGISTER_TOOLS_PRESENT=true
+GLOBAL_CIDR_GATE=true
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+PROVIDER_CHANGED=false
+TESTS=false
+MOCK=false
+SYNTHETIC_RESULT=false
+
+## Sonuç
+
+17H-R2, gerçek public-source gözlemini ve tek yönlü faz geçişini çalışır olarak gösterdi. AI'nin ürettiği intentler geçerli global IPv4/canonical port sözleşmesine uymadığı için sistem scanner çalıştırmadan fail-close oldu. Bu turda proxy üretimi yoktur; gerçek kazanım, source döngüsünün sonsuza gitmesinin ve geçersiz ağ niyetinin scanner'a ulaşmasının engellenmesidir.

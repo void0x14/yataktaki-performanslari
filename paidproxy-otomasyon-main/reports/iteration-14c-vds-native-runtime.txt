@@ -1,0 +1,44 @@
+# Iteration 14C — VDS native runtime acceptance
+
+Tarih: 2026-09-05
+İncelenen alan: Yalnız mevcut VDS Sway + wayvnc sanal ekranında native PaidProxy pencere ve gerçek RFB framebuffer gözlemi.
+
+## Gerçek runtime
+
+- Mimari: aarch64 / Debian arm64
+- Python: /usr/bin/python3 3.13.5
+- PySide6: 6.8.2.1
+- Qt: 6.8.2
+- Qt platform ortamı: QT_QPA_PLATFORM=wayland
+- Wayland: XDG_RUNTIME_DIR=/run/paidproxy-wayland, WAYLAND_DISPLAY=wayland-1
+- Native pencere: PaidProxy — Operasyon Kokpiti
+- Sway app_id: python3
+- Sway yüzeyi: 1280x720; PaidProxy penceresi Sway ağacında 640x720 bölmede göründü
+- Native desktop PID gözlemleri: 71555, 73915, 75802, 76702; son native runtime instance PID 76702 kabul ekranı sırasında ayaktaydı.
+
+## Gerçek RFB kanıtı
+
+- wayvnc PID: 59591
+- endpoint: 127.0.0.1:5900
+- Sunucu: WayVNC
+- RFB protokolü: 3.8
+- Security type: 1 / None
+- Framebuffer: 1280x720, tek raw rectangle
+- Kabul görüntüsü: reports/iteration-14c-artifacts/vds-wayvnc-paidproxy.jpg
+- JPEG boyutu: 161955 bytes
+- SHA256: 38dae32c13032b082f76830a22da0784fb2d27aea69d54b3c6bc41c7900cd17d
+
+Eski vncsnapshot 1.2a RFB 3.3 istemcisi WayVNC 3.8 oturumunu kapattı. Görsel kabul için aynı VDS loopback wayvnc’ye gerçek RFB 3.8 el sıkışması yapıldı; framebuffer ffmpeg ile JPEG olarak kodlandı. Görüntü crop, redraw veya sentetik içerik değildir.
+
+## Operasyon sınırı
+
+- agentd PID: 63887
+- evidence service PID: 59572
+- Sway PID: 59583
+- wayvnc PID: 59591
+- surface PID: 59593
+- Bu servisler yeniden başlatılmadı.
+- Mevcut worker süreçleri çalışmaya devam etti.
+- Production LiveVncViewer bu iterasyonda LIVE olamadı; GUI display_select TimeoutError aldı. Bunun gerçek nedeni 14D’de display-control concurrency olarak ayrıştırıldı.
+- Laptopta GUI, ekran görüntüsü veya resize yapılmadı.
+- Test, build, lint, mock, fixture, Xvfb veya offscreen çalıştırılmadı.

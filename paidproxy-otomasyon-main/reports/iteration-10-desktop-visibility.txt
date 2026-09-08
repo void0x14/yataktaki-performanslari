@@ -1,0 +1,63 @@
+# PaidProxy — Iterasyon 10 native görünürlük sonucu
+
+Zaman: 2026-09-05
+İncelenen alan: yalnız mevcut native desktop görünürlük kokpiti; yeni ajan, tarama, L7 ve yayın yok.
+
+## Uygulanan görünürlük değişiklikleri
+
+- desktop/app/main.py üç sütunlu buton panelinden native operasyon kokpitine dönüştürüldü.
+- desktop/app/cockpit.py eklendi: global sağlık şeridi, tüm ajanlar için sabit kartlar ve seçili ajan çalışma/müdahale paneli.
+- desktop/app/timeline.py eklendi: seçili ajana ait kategorili A-Z event/replay zaman çizgisi; seq ile dedupe.
+- desktop/app/evidence_view.py eklendi: gerçek frame önizleme, provenance, video artifact kartları ve native Qt video oynatma yolu.
+- desktop/app/live_vnc.py eklendi: forwarded VDS wayvnc üzerinde gerçek RFB 3.8 handshake, raw framebuffer ve native Qt yüzeyi.
+- desktop/app/remote_models.py canonical remote state, hipotez/karşı hipotez/sonraki adım, tool/event, directive ve evidence alanlarıyla yeniden kuruldu.
+- desktop/app/vds.py gerçek VDS artifact kökü olan var/agentd/agents/... yoluna düzeltildi.
+- desktop/app/tema.py kokpit bileşenleri için görünür durum stilleri aldı.
+
+## Gerçek GUI kanıtı
+
+- Uygulama gerçek X11 oturumunda açıldı: PaidProxy — Operasyon Kokpiti.
+- reports/iteration-10-artifacts/cockpit-selected-evidence.png içinde aynı pencere üzerinde:
+  - 23 ajanlık görünür rail;
+  - seçili ajan pet'i;
+  - seçili ajanın PID/PGID, state, mevcut olay ve hedefi;
+  - AI kararı;
+  - hipotez ve karşı hipotez;
+  - sonraki adım;
+  - operatör alanı;
+  - A-Z zaman çizgisi;
+  - gerçek VDS frame'i;
+  - frame provenance, event_id, render_revision ve video ref'i
+  birlikte görülüyor.
+- Screenshot gerçek X11 root capture'dır; offscreen/Xvfb/sentetik frame kullanılmadı.
+
+## Gerçek artifact cache kanıtı
+
+Seçili ajan ajan-10c9647a6eb94b50 için yerel cache:
+- frame PNG: 31056 bytes
+- frame provenance JSON: 1373 bytes
+- video MKV: 90279 bytes
+- video provenance JSON: 359 bytes
+
+Yerel kök:
+ /home/void0x14/.local/share/paidproxy/artifacts/ajan-10c9647a6eb94b50/
+
+## Gerçek canlı VNC sonucu
+
+- VDS capability canlı: wayland-1, gerçek frame/video hazır, wayvnc loopback hazır.
+- Native RFB viewer kodu uygulamaya bağlandı.
+- Ancak mevcut evidence scheduler'daki 15 pending video request nedeniyle display_select üretim isteği 30 saniyede cevap dönmedi.
+- Tekrar eden display_select veya sahte canlı görüntü kullanılmadı.
+- Bu nedenle bu iterasyonda in-app LIVE framebuffer PASS iddiası yoktur; uygulama doğru biçimde RELEASED/UNAVAILABLE durumunu görünür gösterdi.
+- Bu blocker RFB formatı değil, display_select/evidence kontrol kuyruğudur.
+
+## Korunan sınırlar
+
+- Yeni ajan başlatılmadı.
+- Tarama, masscan, L7 ve proxy yayınlama yapılmadı.
+- Mevcut diğer ajanlara lifecycle müdahalesi yapılmadı.
+- Test, mock, build, lint ve offscreen çalışma yapılmadı.
+
+## Karar
+
+İterasyon 10 görünürlük kokpitini ve gerçek artifact cache yolunu ileri taşıdı; fakat in-app canlı VDS framebuffer ve display-select kuyruğu çözülmediği için original goal tamamlanmış değildir.

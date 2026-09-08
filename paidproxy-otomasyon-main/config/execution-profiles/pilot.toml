@@ -1,0 +1,11 @@
+name = "pilot"
+connect_timeout_ms = 500
+handshake_timeout_ms = 1500
+total_timeout_ms = 4000
+max_attempts = 2
+concurrency = 8
+backoff_ms = 100
+jitter_ms = 50
+circuit_breaker_errors = 8
+protocol_order = []
+retryable_errors = ["TimeoutError"]

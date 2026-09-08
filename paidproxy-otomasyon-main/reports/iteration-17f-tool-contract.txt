@@ -1,0 +1,50 @@
+# Iteration 17F — decision/tool argument contract gate
+
+Date: 2026-09-06
+İncelenen alan: Production decision-to-tool contract only. No worker was created and no tool handler was invoked.
+
+## Source
+
+- Changed only `services/agentd/ai_runtime.py`.
+- Local/VDS SHA-256: `885450598a1127f180fbac69d151ba37baa5a651508628a3c767a9a1a94c8b40`.
+- `ToolCatalog.describe()` now publishes argument contracts for all real VDS tools.
+- `validate_tool_arguments()` performs side-effect-free shape validation: URL scheme/hostname, IP/CIDR, port intent, protocols, and required delivery fields.
+- `_requested_tools()` is all-or-nothing: one invalid or unknown requested tool rejects the entire decision before any handler can start and emits `decision_contract_rejected`.
+- Model snapshot explicitly carries the contract and `tool_version=catalog-2`.
+
+## Real live contract evidence
+
+- Source used the real 17E VDS tool catalog as the base and merged the new production contracts.
+- Fresh production NVIDIA decision turn 1 requested no tool; it was rejected for not meeting this acceptance slice.
+- Fresh production NVIDIA decision turn 2 requested only `browse_public_source` with:
+  `https://www.example.com`
+- Production `validate_tool_arguments()` accepted the absolute HTTP URL. No HTTP fetch and no handler invocation occurred.
+- Negative real gate with `vds://invalid-public-source` returned `contract_valid=false` and `handler_invoked=false`.
+- No masscan, expand, validate_proxy, publish_proxy, or other network operation ran.
+
+## Process protection
+
+- Pre-existing snapshot: 11 workers.
+- Current snapshot: 12 workers; the only new PID is the already-authorized 17E canary `118591`.
+- Pre-existing PID/PGID/starttime/fd1/fd2 changes: none.
+- agentd MainPID remained `91953`.
+- Kor-48b6 PID `118591` and Pus-4541 PID `115203` both remained stopped/paused.
+- No worker or agentd restart.
+
+## Acceptance
+
+DECISION_CONTRACT_VALID=true
+NEGATIVE_GATE_VALID=false
+TOOL_INVOKED=false
+MASSCAN_STARTED=false
+NEW_WORKER=false
+AGENTD_RESTART=false
+EXISTING_WORKER_RESTART=false
+SCANNER_CHANGED=false
+RESULT_PATH_CHANGED=false
+SERVER_CHANGED=false
+MOCK=false
+TESTS=false
+SYNTHETIC_RESULT=false
+
+Result: the real contract gate accepted a valid public-source decision and rejected a non-http URL without invoking a handler. Discovery remains intentionally unopened until a future fresh canary uses this gate and produces a valid, evidence-backed target.

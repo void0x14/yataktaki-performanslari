@@ -1,0 +1,91 @@
+# Iteration 14H4 — Two-Phase Handover VDS Evidence
+
+Tarih: 2026-09-06
+Proje: paidproxy-otomasyon-main
+Çalışma sınırı: yalnızca mevcut PaidProxy projesi ve mevcut VDS runtime.
+Plan kaynağı: mevcut PaidProxy ChatGPT/C2C sohbetindeki 14H4 planı.
+
+## Uygulanan kaynak
+
+14H4 için iki dosya değiştirildi ve VDS'e aktarıldı:
+
+- `services/agentd/handover.py`
+- `services/agentd/supervisor.py`
+
+Yerel ve VDS kaynak hash'leri eşleşti:
+
+- supervisor.py: `c253c21528bdf22b75313bc0f458817b46cd6f61d1f2b887abf6a1f479ff6119`
+- handover.py: `d4f11e84be67da044f1ebe797fbd936de53ba1354971cfe99dd0f6efa80392`
+
+Protokol sürümü 2'ye yükseltildi. Alıcı `adoption_commit` göndermeden broker'ın tuttuğu orijinal FD'ler kapatılmıyor. Alıcı koparsa broker aynı donmuş manifest ile yeniden alıcı kabul ediyor.
+
+## Commit yolu — gerçek VDS yürütmesi
+
+Mevcut `agentd` PID 63887 çalışırken ayrı geçici broker/alıcı süreçleriyle yürütüldü:
+
+- broker PID: 84453
+- receiver PID: 84457
+- manifest: `handover-84453-1788655815630225276`
+- doğrulanan worker: 10
+- doğrulanan stream FD: 20
+- commit öncesi broker canlı: evet
+- commit öncesi broker'ın tuttuğu pipe FD: 20
+- commit öncesi socket mevcut: evet
+- receiver durumu: başarılı
+- broker durumu: başarılı
+- streamlerden okunan byte: 0
+- inode doğrulaması: başarılı
+- commit sonrası socket: yok
+
+## Abort/retry yolu — gerçek VDS yürütmesi
+
+İlk alıcı bilerek commit göndermeden kapatıldı; ikinci alıcı aynı broker'a bağlandı:
+
+- broker PID: 84686
+- ilk alıcı sonucu: `committed=false`, doğrulama başarılı
+- ilk alıcı exit durumu: 0
+- ilk alıcı koptuktan sonra broker canlı: evet
+- ilk alıcı koptuktan sonra broker'ın tuttuğu pipe FD: 20
+- retry öncesi socket mevcut: evet
+- ikinci alıcı manifest ID'si ilk alıcıyla aynı: evet
+- ikinci alıcı doğrulanan worker: 10
+- ikinci alıcı doğrulanan stream FD: 20
+- ikinci alıcı `committed=true`: evet
+- ikinci alıcı exit durumu: 0
+- broker exit durumu: 0
+- commit sonrası socket: yok
+- iki alıcıda da streamlerden okunan byte: 0
+- inode doğrulaması: başarılı
+
+Bu, ilk alıcı kaybolduğunda FD'lerin serbest bırakılmadığını ve aynı devir oturumunun ikinci alıcıya aktarılabildiğini gerçek VDS süreçleri üzerinde gösterdi.
+
+## Runtime sürekliliği
+
+Abort/retry sonrasında yapılan salt-okur kontrolde:
+
+- agentd: PID 63887, PGID 63887, starttime 17857789
+- evidence: PID 79382, PGID 79382, starttime 19142627
+- Sway: PID 79390, PGID 79382, starttime 19142635
+- wayvnc: PID 79396, PGID 79382, starttime 19142655
+- surface: PID 79397, PGID 79382, starttime 19142655
+- 10 worker'ın tamamı aynı PID/PGID/starttime değerleriyle ayaktaydı
+- PID 64639 / ajan-14163494ffe44921: state `stopping`, starttime 17877093, değişmedi
+- stale PID 64117: yok
+- 127.0.0.1:8787 sahibi yeni süreç değil, mevcut agentd PID 63887
+- events.jsonl son görülen seq: 1956; handover denemeleri yeni agentd olayı üretmedi
+- wf-recorder süreci gözlendi: PID 84871; kayıt dosyası writer tarafından açık tutuluyordu
+
+## Yapılmayanlar
+
+- agentd restart edilmedi.
+- worker, evidence, Sway veya wayvnc restart/kill/sinyal edilmedi.
+- gerçek cutover yapılmadı.
+- 8787 yeniden bind edilmedi.
+- systemd veya mailbox değiştirilmedi.
+- proxy taraması yapılmadı.
+- desktop uygulamasına yeni işlev eklenmedi.
+- test, mock, fixture, build, lint, Xvfb veya offscreen çalışma yapılmadı.
+
+## Sonuç
+
+14H4 iki fazlı devir protokolü commit ve abort/retry yollarında gerçek VDS yürütmesiyle geçti. Bu dilim canlı agentd cutover'ını yapmadı; 14I ayrı ChatGPT/C2C incelemesi olmadan başlatılmayacak.

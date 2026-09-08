@@ -1,0 +1,29 @@
+[Unit]
+Description=PaidProxy real Sway headless evidence surface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mani
+WorkingDirectory=/home/mani/paidproxy-otomasyon
+RuntimeDirectory=paidproxy-wayland
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/paidproxy-wayland
+Environment=WAYLAND_DISPLAY=paidproxy-wayland
+Environment=PAIDPROXY_WAYLAND_RUNTIME_DIR=/run/paidproxy-wayland
+Environment=PAIDPROXY_WAYLAND_DISPLAY=paidproxy-wayland
+ExecStart=/usr/bin/python3 -m services.agentd.evidence_display --root /home/mani/paidproxy-otomasyon/var/agentd
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mani/paidproxy-otomasyon/var /run/paidproxy-wayland
+KillMode=control-group
+TimeoutStopSec=20
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[[routes]]
+role = "decision"
+provider = "unconfigured"
+model = "unconfigured"
+version = "1"
+fallback_order = 0
+healthy = false
+capability = "decision"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$ROOT/cockpit/src-tauri/target/debug/paidproxy-cockpit"
+if [[ ! -x "$BIN" ]]; then
+  printf 'Masaüstü ikilisi bulunamadı: %s\n' "$BIN" >&2
+  exit 1
+fi
+cd "$ROOT/cockpit"
+exec "$BIN" "$@"

@@ -1,0 +1,185 @@
+# Iteration 14H7 — Systemd Cutover Preflight
+
+Tarih: 2026-09-06
+Proje: paidproxy-otomasyon-main
+Çalışma sınırı: mevcut PaidProxy projesi ve mevcut VDS runtime.
+Plan kaynağı: mevcut PaidProxy ChatGPT/C2C sohbetindeki 14H7 planı.
+
+## Preflight incelemesi
+
+VDS üzerinde yalnızca şu salt-okur komut çalıştırıldı:
+
+`/usr/bin/python3 /home/mani/paidproxy-otomasyon/ops/vds/agentd-cutover.py preflight`
+
+Preflight:
+
+- systemd effective unit özelliklerini okudu.
+- /proc üzerinden agentd ve persisted worker kimliklerini/cgroup'larını okudu.
+- 127.0.0.1:8787 listener sahibini okudu.
+- mevcut handover `probe` modunu çalıştırarak gerçek pipe mapping'lerini doğruladı.
+- kaynak hash'lerini ve protocol/capacity sabitlerini okudu.
+- gelecekteki drop-in ve transaction state machine'i yalnızca çıktı olarak render etti.
+
+## Sonuç
+
+- status: PASS
+- mutation_performed: false
+- systemd_mutation: false
+- daemon_reload: false
+- runtime_dropin_written: false
+- broker_serve_started: false
+- old_main_signalled: false
+- service_start_stop_restart: false
+- errors: []
+
+## Etkili systemd gerçekleri
+
+- unit: `paidproxy-agentd.service`
+- MainPID: 63887
+- ActiveState/SubState: active/running
+- User: mani
+- Restart: on-failure
+- KillMode: control-group
+- ControlGroup: `/system.slice/paidproxy-agentd.service`
+- FragmentPath: `/etc/systemd/system/paidproxy-agentd.service`
+- DropInPaths: boş
+- effective ExecStart: `/usr/bin/python3 -m services.agentd --root /home/mani/paidproxy-otomasyon/var/agentd --host 127.0.0.1 --port 8787`
+- production ExecStart'ta handover argümanı yok.
+
+Agentd gerçek process kimliği:
+
+- PID: 63887
+- PPID: 1
+- PGID: 63887
+- starttime: 17857789
+- cgroup: `/system.slice/paidproxy-agentd.service`
+
+## Worker cgroup ve kimlik ilişkisi
+
+10 canlı persisted worker'ın tamamı:
+
+- PPID olarak 63887
+- kendi process-group PID'si
+- `/system.slice/paidproxy-agentd.service` cgroup'u
+- worker cmdline içinde doğru `--agent-id`
+- persisted PGID ile eşleşen PGID
+- canlı PID/starttime kimliği
+
+olarak doğrulandı.
+
+Canlı worker PID/starttime/state özeti:
+
+- 64597 / 17874908 / running
+- 64602 / 17875012 / running
+- 64614 / 17875431 / running
+- 64639 / 17877093 / stopping
+- 64654 / 17877815 / running
+- 64656 / 17877844 / running
+- 64658 / 17877898 / running
+- 64660 / 17877926 / running
+- 64663 / 17878028 / running
+- 64675 / 17878063 / running
+
+Stale persisted kayıt:
+
+- ajan: `ajan-10c9647a6eb94b50`
+- PID/PGID: 64117/64117
+- persisted state: `stopping`
+- process: absent
+- kayıt değişmedi.
+
+## Production port
+
+- listener sayısı: 1
+- adres: `127.0.0.1:8787`
+- owner: PID 63887
+- yeniden bind: false
+
+## Handover probe
+
+- manifest version: 2
+- probe manifest: `probe-85970-1788658184606289002`
+- persisted candidate count: 11
+- live process candidate count: 10
+- omitted persisted candidate: `ajan-10c9647a6eb94b50`
+- worker count: 10
+- stream count: 20
+- mapping count: 20
+- mapping_complete: true
+- her mapping'de duplicate_verified: true
+
+PID 64639 için gerçek mapping:
+
+- stdout: old agentd FD 32, pipe inode 1849636
+- stderr: old agentd FD 34, pipe inode 1849637
+
+Protocol-v2 handover kaynağı ve mapping'leri read-only probe ile doğrulandı.
+
+## Worker I/O kapasitesi
+
+- worker IO threads: 128
+- reserved slots: 8
+- slots/worker: 3
+- güvenli canlı kapasite: 40
+- mevcut canlı worker: 10
+- mevcut persistent slot talebi: 30
+
+## Gelecekteki transaction render'ı
+
+Preflight bunu diske yazmadı. Render edilen geçici drop-in:
+
+```ini
+[Service]
+Restart=no
+KillMode=process
+ExecStart=
+ExecStart=/usr/bin/python3 -m services.agentd --root /home/mani/paidproxy-otomasyon/var/agentd --host 127.0.0.1 --port 8787 --handover-socket /run/paidproxy-agentd-handover/paidproxy-agentd.sock --old-agentd-pid 63887
+```
+
+Planlanan sıralı state'ler:
+
+`BASELINE_VALIDATED -> BROKER_READY -> RUNTIME_OVERRIDE_LOADED -> OLD_MAIN_TERMINATED -> WORKERS_PRESERVED -> NEW_MAIN_STARTED -> HANDOVER_COMMITTED -> PRODUCTION_8787_READY -> ACCEPTANCE_PENDING -> FINALIZED`
+
+Preflight sırasında:
+
+- `/run/systemd/system/paidproxy-agentd.service.d/90-paidproxy-handover.conf` yok.
+- `/home/mani/paidproxy-otomasyon/var/agentd/cutover-state.json` yok.
+- hiçbir systemd action çağrılmadı.
+- broker başlatılmadı.
+- old main sinyallenmedi.
+- service start/stop/restart yapılmadı.
+
+## Passive evidence ve son durum
+
+Preflight sonrasında:
+
+- evidence process PID 79382 canlı.
+- Sway/surface process'leri canlı.
+- wayvnc process'i canlı.
+- wf-recorder canlı: PID 85984.
+- events.jsonl son seq: 1956.
+- production 8787 hâlâ PID 63887 tarafından tutuluyor.
+- worker PID/PGID/starttime değerleri değişmedi.
+
+## Yapılmayanlar
+
+- gerçek cutover yapılmadı.
+- systemd override yazılmadı.
+- daemon-reload yapılmadı.
+- agentd/worker/evidence/Sway/wayvnc restart veya signal yapılmadı.
+- broker başlatılmadı.
+- cutover journal oluşturulmadı.
+- test, mock, fixture, build, lint, Xvfb veya offscreen çalışma yapılmadı.
+- yeni ajan, yeni proje veya yeni sohbet oluşturulmadı.
+
+## Sonuç
+
+14H7, gerçek VDS systemd/cgroup/topology preflight olarak PASS:
+
+- mevcut unit'in neden sıradan restart ile worker'ları öldüreceği cgroup ilişkisiyle kanıtlandı.
+- gelecekteki main-only transaction'ın state sıralaması ve geçici drop-in'i render edildi.
+- tüm 10 canlı worker ve 20 pipe mapping'i doğrulandı.
+- kapasite 40, mevcut talep 30 olarak görünür.
+- hiçbir runtime veya systemd mutasyonu yapılmadı.
+
+Bu çıktı cutover yetkisi değildir. 14I hâlâ çalıştırılmayacak.

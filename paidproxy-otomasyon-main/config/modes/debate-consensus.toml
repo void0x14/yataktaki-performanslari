@@ -1,0 +1,11 @@
+name = "debate-consensus"
+type = "debate_consensus"
+version = "1"
+enabled = true
+activation = "inactive"
+created_by = "operator"
+
+[graph]
+proponents = ["advocate"]
+opponents = ["skeptic"]
+finalizer = "finalizer"

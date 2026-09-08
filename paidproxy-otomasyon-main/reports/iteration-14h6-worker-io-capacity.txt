@@ -1,0 +1,114 @@
+# Iteration 14H6 — Worker I/O Capacity Gate
+
+Tarih: 2026-09-06
+Proje: paidproxy-otomasyon-main
+Çalışma sınırı: mevcut PaidProxy projesi ve mevcut VDS runtime.
+Plan kaynağı: mevcut PaidProxy ChatGPT/C2C sohbetindeki 14H6 planı.
+
+## Uygulanan kaynak
+
+Bu dilimde yalnızca `services/agentd/supervisor.py` değiştirildi.
+`handover.py`, `worker.py`, evidence, desktop, protocol ve systemd değiştirilmedi.
+
+Yerel ve VDS SHA256:
+
+`7a437da6a898f0b4929fb7e39ed15bbc799991c69dd19d2e63ce7af3c69de3bb`
+
+Kapasite sabitleri:
+
+- worker IO thread sayısı: 128
+- worker IO rezervi: 8
+- worker başına persistent IO slotu: 3
+- güvenli canlı worker kapasitesi: floor((128 - 8) / 3) = 40
+
+Kapasite gerçekleri status ve `handover_prepare_summary()` çıktısına eklendi.
+Yeni worker spawn edilmeden hemen önce mevcut canlı handle sayısı kontrol ediliyor.
+Adopted handover task scheduling öncesinde canlı set güvenli kapasiteyi aşıyorsa fail-closed oluyor.
+
+## Gerçek VDS prepare-only yürütmesi
+
+Üretim agentd PID 63887 çalışırken:
+
+- broker PID: 85616
+- prepare-only supervisor PID: 85620
+- protocol: 2
+- manifest ID: `handover-85616-1788657557803428340`
+- alternatif loopback port: 44227
+- supervisor exit durumu: 0
+- adopted handles: 10
+- prepared stream task'ları: 20
+- prepared watcher task'ları: 10
+- prepared toplam: 30/30
+- worker IO threads: 128
+- worker IO reserve: 8
+- safe live capacity: 40
+- current live handles: 10
+- expected persistent slots: 30
+- activation event: false
+- command-ready gate: false
+- stream read attempts: 0
+- server bound: true
+- prepare-only committed: false
+
+Stale reconciliation planı yalnızca okundu:
+
+- ajan: `ajan-10c9647a6eb94b50`
+- PID/PGID: 64117/64117
+- persisted state: `stopping`
+- process present: false
+
+## Broker retry ve cleanup
+
+Prepare-only supervisor commit göndermeden kapandı:
+
+- broker kapanmadan önce canlı kaldı: evet
+- broker'ın tuttuğu pipe FD: 20
+- handover socket retry sırasında mevcut: evet
+- retry receiver aynı manifest ID'sini gördü: evet
+- retry worker: 10
+- retry stream: 20
+- inode validation: true
+- `stream_bytes_read=0`: evet
+- final `committed=true`: evet
+- retry exit durumu: 0
+- broker exit durumu: 0
+- commit sonrası socket: yok
+
+## Runtime sürekliliği
+
+Dry-run sonrasında:
+
+- agentd: PID 63887, starttime 17857789, PGID 63887
+- evidence: PID 79382, starttime 19142627, PGID 79382
+- Sway: PID 79390, starttime 19142635, PGID 79382
+- wayvnc: PID 79396, starttime 19142655, PGID 79382
+- surface: PID 79397, starttime 19142655, PGID 79382
+- 10 worker'ın tamamı aynı PID/PGID/starttime ile ayakta
+- PID 64639: `stopping`, starttime 17877093, değişmedi
+- PID 64117: yok; persisted kayıt `stopping`, değiştirilmedi
+- 127.0.0.1:8787 sahibi mevcut agentd PID 63887
+- wf-recorder canlı süreç olarak gözlendi: PID 85683
+- events.jsonl seq: 1956
+
+## Yapılmayanlar
+
+- production agentd restart edilmedi.
+- worker, evidence, Sway veya wayvnc restart/kill/sinyal edilmedi.
+- production 8787'ye bağlanılmadı veya yeniden bind edilmedi.
+- systemd değişikliği yapılmadı.
+- gerçek cutover yapılmadı.
+- proxy taraması yapılmadı.
+- test, mock, fixture, build, lint, Xvfb veya offscreen çalışma yapılmadı.
+- yeni ajan, yeni proje veya yeni sohbet oluşturulmadı.
+
+## Sonuç
+
+14H6 kapasite kapısı gerçek VDS runtime'ında geçti:
+
+- Mevcut 10 worker'ın 30 persistent IO slot talebi görünür.
+- 128 thread ve 8 rezerv ile güvenli kapasite 40 olarak hesaplanıyor.
+- Kapasite sınırı spawn öncesinde ve adopted handover task scheduling öncesinde fail-closed uygulanıyor.
+- 14H5'in 30/30, activation=false, command_ready=false ve stream_read_attempts=0 invariants'ı korundu.
+- Mevcut production topology değişmedi.
+
+14I gerçek cutover değildir; ayrı ChatGPT/C2C incelemesi olmadan başlatılmayacaktır.
