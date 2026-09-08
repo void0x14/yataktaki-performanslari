@@ -1,5 +1,12 @@
 type Row = Record<string, any>;
 
+export function evidenceImageRef(event: Row): string {
+  const frame = String(event?.frame_ref || '');
+  if (frame) return frame;
+  const refs = Array.isArray(event?.evidence_refs) ? event.evidence_refs : [];
+  return refs.map(String).find(ref => /\.(?:png|jpe?g|webp)$/i.test(ref)) || '';
+}
+
 export function checkedResponse(value: unknown): Row {
   if (!value || typeof value !== 'object' || !('ok' in value)) {
     throw new Error('Geçersiz agentd yanıtı');

@@ -163,3 +163,36 @@ def test_masscan_command_uses_noninteractive_sudo_for_unprivileged_worker(monkey
     monkeypatch.setattr(ai_runtime.shutil, "which", lambda name: "/usr/bin/sudo" if name == "sudo" else None)
     command = ai_runtime._masscan_command("1.2.3.0/24", "3128", 1000)
     assert command[:3] == ["/usr/bin/sudo", "-n", "masscan"]
+
+
+
+def test_myip_source_is_collected_by_kahin_and_anchored_to_agent_evidence(tmp_path, monkeypatch):
+
+    def fake_collect(url):
+        return {
+            "working_note": "Kahin visual proof",
+            "url": url,
+            "status": 200,
+            "content_type": "text/visual+ocr",
+            "body_preview": "AS64501 9.9.9.9 broadband reseller",
+            "_screenshot_bytes": b"visual-proof",
+            "source_provenance": "kahin-mirage-google-vision",
+            "observed_ips": ["9.9.9.9"],
+            "observed_cidrs": [],
+            "observed_asns": [64501],
+        }
+
+    monkeypatch.setattr("services.agentd.kahin_source.collect_myip_source", fake_collect)
+    runtime = AgentRuntime(
+        root=tmp_path / "runtime",
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    result = runtime._browse_public_source({"url": "https://myip.ms/"})
+    assert result["source_provenance"] == "kahin-mirage-google-vision"
+    assert result["observed_ips"] == ["9.9.9.9"]
+    assert any(ref.endswith("kahin-myip-00000.png") for ref in result["evidence_refs"])

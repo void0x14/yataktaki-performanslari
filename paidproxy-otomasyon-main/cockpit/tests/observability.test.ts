@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { checkedResponse, mergeEvents, eventCursor } from '../app/src/observability.ts';
+import { checkedResponse, mergeEvents, eventCursor, evidenceImageRef } from '../app/src/observability.ts';
 
 test('a rejected command cannot be displayed as completed', () => {
   assert.throws(() => checkedResponse({ok: false, error: 'agent_not_found', detail: 'missing'}), /agent_not_found.*missing/);
@@ -27,4 +27,17 @@ test('bounded history retains the newest events', () => {
   assert.equal(result.length, 250);
   assert.equal(result[0].seq, 51);
   assert.equal(eventCursor(result), 300);
+});
+
+
+test('Kahin OCR screenshot is a visible evidence image', () => {
+  const event = {
+    evidence_refs: [
+      'agent://a/outputs/source-00001.txt',
+      'agent://a/outputs/kahin-myip-00001.png',
+    ],
+  };
+  assert.equal(evidenceImageRef(event), 'agent://a/outputs/kahin-myip-00001.png');
+  assert.equal(evidenceImageRef({frame_ref:'agent://a/frames/0001.png'}), 'agent://a/frames/0001.png');
+  assert.equal(evidenceImageRef({evidence_refs:['agent://a/outputs/source.txt']}), '');
 });

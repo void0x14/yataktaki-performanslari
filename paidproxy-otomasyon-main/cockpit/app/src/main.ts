@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { createElement, Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot } from 'lucide';
 import './styles.css';
 import './observability.css';
-import { checkedResponse, eventCursor, mergeEvents } from './observability';
+import { checkedResponse, eventCursor, mergeEvents, evidenceImageRef } from './observability';
 
 type Agent = Record<string, any>;
 type EventRow = Record<string, any>;
@@ -226,10 +226,10 @@ function renderEvents(){
   list.innerHTML=rows.length?rows.slice().reverse().map(e=>{const idx=state.events.indexOf(e); return `<button class="event ${category(e)}" data-event="${idx}"><i></i><span><b>${esc(e.event_type||'event')}</b><small>${esc(e.working_note||e.tool||e.target||'Olay kaydı')}</small></span><time>${time(e.timestamp)}</time></button>`;}).join(''):'<div class="empty-event">Bu filtrede olay yok.</div>';
   list.querySelectorAll<HTMLElement>('[data-event]').forEach(el=>el.onclick=()=>inspect(Number(el.dataset.event))); renderFrames();
 }
-function frameEvents(){ return state.events.filter(e=>e.frame_ref); }
+function frameEvents(){ return state.events.filter(e=>Boolean(evidenceImageRef(e))); }
 function renderFrames(){
   const frames=frameEvents(); const strip=document.querySelector('#frame-strip')!;
-  strip.innerHTML=frames.length?frames.slice(-8).map(e=>{ const idx=state.events.indexOf(e); return `<button class="frame ${category(e)} ${idx===state.inspectIndex?'selected':''}" data-frame="${idx}"><img data-thumb="${esc(e.frame_ref)}" alt=""/><b>#${esc(e.seq)}</b><small>${time(e.timestamp)}</small></button>`; }).join(''):'<div class="empty-frame">Gerçek frame event\u2019i bekleniyor</div>';
+  strip.innerHTML=frames.length?frames.slice(-8).map(e=>{ const idx=state.events.indexOf(e); return `<button class="frame ${category(e)} ${idx===state.inspectIndex?'selected':''}" data-frame="${idx}"><img data-thumb="${esc(evidenceImageRef(e))}" alt=""/><b>#${esc(e.seq)}</b><small>${time(e.timestamp)}</small></button>`; }).join(''):'<div class="empty-frame">Gerçek frame veya Kahin OCR görsel kanıtı bekleniyor</div>';
   text('replay-position',frames.length?`${frames.length} gerçek kayıt`:'Kayıt yok');
   const scrub=document.querySelector<HTMLInputElement>('#scrub')!; scrub.max=String(Math.max(0,state.events.length-1)); scrub.value=String(Math.max(0,state.inspectIndex<0?state.events.length-1:state.inspectIndex));
   strip.querySelectorAll<HTMLElement>('[data-frame]').forEach(el=>el.onclick=()=>inspect(Number(el.dataset.frame)));
@@ -254,13 +254,14 @@ async function loadFrameRef(frameRef:string,purpose:'thumb'|'preview'){
 }
 function inspect(index:number){
   const e=state.events[index]; if(!e) return;
-  state.inspectIndex=index; state.inspectDataUrl=String(e.frame_ref||'');
+  const imageRef=evidenceImageRef(e);
+  state.inspectIndex=index; state.inspectDataUrl=imageRef;
   text('raw-event',JSON.stringify(e,null,2));
-  text('preview-text',e.frame_ref?'GERÇEK FRAME':'Bu event için frame yok');
+  text('preview-text',imageRef?(e.frame_ref?'GERÇEK FRAME':'KAHİN · MYIP.MS · GOOGLE VISION OCR KANITI'):'Bu event için görsel kanıt yok');
   const img=document.querySelector<HTMLImageElement>('#preview-img')!;
-  if(e.frame_ref){ img.hidden=true; loadFrameRef(String(e.frame_ref),'preview'); } else { img.hidden=true; }
+  if(imageRef){ img.hidden=true; loadFrameRef(imageRef,'preview'); } else { img.hidden=true; }
   const t=document.querySelector<HTMLElement>('#preview-text')!; t.hidden=false;
-  document.querySelector('#metadata')!.innerHTML=`<div><dt>Zaman</dt><dd>${esc(time(e.timestamp))}</dd></div><div><dt>Eylem</dt><dd>${esc(e.event_type)}</dd></div><div><dt>Ajan</dt><dd>${esc(e.agent_id)}</dd></div><div><dt>Dosya</dt><dd>${esc(e.frame_ref||e.video_ref||'—')}</dd></div>`;
+  document.querySelector('#metadata')!.innerHTML=`<div><dt>Zaman</dt><dd>${esc(time(e.timestamp))}</dd></div><div><dt>Eylem</dt><dd>${esc(e.event_type)}</dd></div><div><dt>Ajan</dt><dd>${esc(e.agent_id)}</dd></div><div><dt>Dosya</dt><dd>${esc(imageRef||e.video_ref||'—')}</dd></div>`;
   renderFrames();
 }
 async function selectAgent(id:string){

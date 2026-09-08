@@ -1185,6 +1185,25 @@ class AgentRuntime:
             raise ValueError("ölü zemin; av sayfası değil")
         if host not in _AV_SOURCE_HOSTS:
             raise ValueError("browse_public_source yalnız av hostları: RIPEstat/RDAP/bgp.he.net/myip.ms")
+        if host == "myip.ms":
+            from services.agentd.kahin_source import collect_myip_source
+
+            result = collect_myip_source(url)
+            screenshot_bytes = result.pop("_screenshot_bytes", b"")
+            if not isinstance(screenshot_bytes, (bytes, bytearray)) or not screenshot_bytes:
+                raise RuntimeError("Kahin görsel kanıt üretmedi")
+            screenshot_ref = self.output_dir / f"kahin-myip-{self.step:05d}.png"
+            screenshot_ref.write_bytes(bytes(screenshot_bytes))
+            body = str(result.get("body_preview") or "").encode("utf-8")
+            body_ref = self.output_dir / f"source-{self.step:05d}.txt"
+            body_ref.write_bytes(body)
+            result["sha256"] = hashlib.sha256(body).hexdigest()
+            result["screenshot_ref"] = f"agent://{self.agent_id}/{screenshot_ref.relative_to(self.agent_dir)}"
+            result["evidence_refs"] = [
+                result["screenshot_ref"],
+                f"agent://{self.agent_id}/{body_ref.relative_to(self.agent_dir)}",
+            ]
+            return result
         try:
             addr = ipaddress.ip_address(socket.gethostbyname(host))
             if addr.is_private or addr.is_loopback or addr.is_link_local:
