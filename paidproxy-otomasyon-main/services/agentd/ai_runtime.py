@@ -1931,11 +1931,16 @@ class AgentRuntime:
                 match = re.search(r"HTTP/\d(?:\.\d)?\s+(\d+)", first)
                 status = int(match.group(1)) if match else None
                 if status != 200:
+                    # 407 means a REAL proxy that wants credentials; 400/404/500
+                    # from a web server means the port is not a proxy at all.
+                    auth_required = status == 407
                     return {
                         "protocol": protocol,
                         "stage": "connect",
                         "response_line": first,
                         "http_status": status,
+                        "proxy_detected": auth_required,
+                        "auth_required": auth_required,
                         "egress_confirmed": False,
                         "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
                     }
@@ -1945,6 +1950,8 @@ class AgentRuntime:
                     "protocol": protocol,
                     "stage": "l7+egress",
                     "connect_response": first,
+                    "proxy_detected": True,
+                    "auth_required": False,
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
                 })
                 return result

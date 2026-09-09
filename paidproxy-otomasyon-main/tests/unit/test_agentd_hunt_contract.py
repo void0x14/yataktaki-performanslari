@@ -853,3 +853,83 @@ def test_drain_reports_egress_hit_when_candidate_works(tmp_path):
     drained = runtime._drain_candidate_queue(max_candidates=10)
     assert drained["checked"] == 1
     assert drained["egress_hits"] == [{"host": "1.2.3.4", "port": 3128}]
+
+
+def test_proxy_auth_required_is_recognised_as_real_proxy(tmp_path):
+    """Measured on the real VDS: 138.124.79.160:10000 answered
+    'HTTP/1.1 407 Proxy Authentication Required'. That is a real proxy that
+    needs credentials, not an open one; it must be classified distinctly from
+    a web server answering 400/404."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+
+    class FakeSock:
+        def __init__(self, payload):
+            self.payload = payload
+        def sendall(self, data):
+            pass
+        def settimeout(self, _t):
+            pass
+        def close(self):
+            pass
+        def recv(self, _n):
+            chunk, self.payload = self.payload, b""
+            return chunk
+
+    target = {"host": "httpbin.org", "port": 443, "path": "/ip", "scheme": "https"}
+    fake = FakeSock(b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n\r\n")
+    import services.agentd.ai_runtime as rt
+    original = rt.socket.create_connection
+    rt.socket.create_connection = lambda addr, timeout=None: fake
+    try:
+        result = runtime._probe_protocol("1.2.3.4", 10000, "http_connect", target)
+    finally:
+        rt.socket.create_connection = original
+    assert result["http_status"] == 407
+    assert result["egress_confirmed"] is False
+    assert result["proxy_detected"] is True
+    assert result["auth_required"] is True
+
+
+def test_web_server_400_is_not_flagged_as_proxy(tmp_path):
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+
+    class FakeSock:
+        def __init__(self, payload):
+            self.payload = payload
+        def sendall(self, data):
+            pass
+        def settimeout(self, _t):
+            pass
+        def close(self):
+            pass
+        def recv(self, _n):
+            chunk, self.payload = self.payload, b""
+            return chunk
+
+    target = {"host": "httpbin.org", "port": 443, "path": "/ip", "scheme": "https"}
+    fake = FakeSock(b"HTTP/1.1 400 Bad Request\r\nServer: nginx\r\n\r\n")
+    import services.agentd.ai_runtime as rt
+    original = rt.socket.create_connection
+    rt.socket.create_connection = lambda addr, timeout=None: fake
+    try:
+        result = runtime._probe_protocol("1.2.3.4", 8000, "http_connect", target)
+    finally:
+        rt.socket.create_connection = original
+    assert result["proxy_detected"] is False
+    assert result["auth_required"] is False
