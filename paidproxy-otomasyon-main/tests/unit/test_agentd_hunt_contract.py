@@ -997,3 +997,32 @@ def test_recovery_restarts_persisted_running_agent(tmp_path):
     assert restarted == [agent["agent_id"]], "persisted running agent must be restarted"
     assert refreshed["state"] in {"running", "created"}, refreshed["state"]
     assert refreshed["state"] != "unknown"
+
+
+def test_bulk_harvest_requires_two_independent_confirmations(monkeypatch):
+    """A candidate is only 'working' when two independent targets both echo it;
+    one lucky 200 from a web server must not qualify."""
+    import services.agentd.bulk_harvest as bh
+
+    monkeypatch.setattr(bh, "fetch_candidates", lambda: [("1.2.3.4", 3128), ("5.6.7.8", 8080)])
+
+    def fake_get(host, port, target, path):
+        if host == "1.2.3.4":
+            return '{"origin": "1.2.3.4"}'      # confirms on both targets
+        return "<html>nginx</html>"              # web page, not a proxy
+
+    monkeypatch.setattr(bh, "_http_get_via_proxy", fake_get)
+    result = bh.harvest(workers=2)
+    assert result["count"] == 1
+    assert result["working"][0]["host"] == "1.2.3.4"
+    assert result["working"][0]["confirmations"] == 2
+
+
+def test_bulk_harvest_writes_delivery_file(tmp_path, monkeypatch):
+    import services.agentd.bulk_harvest as bh
+
+    monkeypatch.setattr(bh, "fetch_candidates", lambda: [("9.9.9.9", 8000)])
+    monkeypatch.setattr(bh, "_http_get_via_proxy", lambda *a, **k: '{"origin": "9.9.9.9"}')
+    result = bh.harvest(workers=1)
+    assert result["count"] == 1
+    assert result["working"][0]["targets"]
