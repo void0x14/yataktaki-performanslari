@@ -554,3 +554,23 @@ def test_operator_declared_live_ips_are_usable_for_port_scan(tmp_path):
     assert runtime._target_provenance_error(
         "port_scan_live_ip", {"ip": "193.233.126.126"}
     ) is None
+
+
+def test_initial_input_live_ips_are_valid_port_scan_provenance(tmp_path):
+    """The operator's brief arrives as initial_input on a fresh agent; its live
+    IP list and hunt flow must be usable without a prior intervene call."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input=(
+            "masscan canli IP ler: 193.233.126.126, 193.233.126.179. "
+            "port_scan_live_ip ile tum acik portlari cikar."
+        ),
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    assert runtime._target_provenance_error(
+        "port_scan_live_ip", {"ip": "193.233.126.126"}
+    ) is None

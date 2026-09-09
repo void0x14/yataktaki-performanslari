@@ -1137,10 +1137,16 @@ class AgentRuntime:
 
         # The operator is an authoritative scent source. When they name a CIDR,
         # ASN or IP, the hunter may act on it instead of re-browsing from zero.
+        # The brief may arrive as the agent's initial_input or as a later
+        # intervene directive; both are operator voice and both must count.
+        operator_texts: list[str] = []
+        if self.initial_input:
+            operator_texts.append(str(self.initial_input))
         for directive in self.operator_directives:
             text = str(directive.get("instruction") or directive.get("text") or "")
-            if not text:
-                continue
+            if text:
+                operator_texts.append(text)
+        for text in operator_texts:
             for value in _PUBLIC_CIDR_RE.findall(text):
                 add_cidr(value)
             for value in _PUBLIC_ASN_RE.findall(text):
