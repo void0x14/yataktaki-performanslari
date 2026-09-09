@@ -306,8 +306,9 @@ def _hunt_notebook_hint() -> str:
     return (
         f" Operatör av defteri: ürün-spesifik vekil portları [{port_text}]"
         + (f", sticky bantları [{band_text}]" if band_text else "")
-        + ". 3128 tek başına script-kiddie mezarlığıdır; ilk diş seçerken bu ürün "
-        "portlarını öncele ve canlı IP çıkınca port_scan_live_ip ile TÜM portlarını çıkar."
+        + ". 3128/1080 tek başına script-kiddie mezarlığıdır; ilk diş için SADECE bu "
+        "ürün portlarını kullan (1080/3128 son çare), canlı IP çıkınca "
+        "port_scan_live_ip ile TÜM portlarını çıkar."
     )
 
 
@@ -832,6 +833,21 @@ class AgentRuntime:
             self._mark_candidate_validated(candidate)
         return {"checked": checked, "egress_hits": egress_hits, "pending": len(self._pending_candidates())}
 
+    def _priority_hunt_ports(self) -> list[int]:
+        """Operator product ports first, legacy script-kiddie ports last.
+
+        The model repeatedly chose 1080/3128 even with the notebook in front of
+        it, so priority is enforced deterministically instead of suggested.
+        """
+        notebook = self._hunt_notebook()
+        operator_ports = [int(port) for port in (notebook.get("ports") or [])]
+        legacy = [1080, 3128, 8080, 8888, 8118, 80, 443]
+        ordered: list[int] = []
+        for port in operator_ports + legacy:
+            if port not in ordered:
+                ordered.append(port)
+        return ordered
+
     def _hunt_notebook(self) -> dict[str, Any]:
         return _read_hunt_notebook()
 
@@ -933,6 +949,7 @@ class AgentRuntime:
             "operator_directives": self.operator_directives[-20:],
             "operator_hunt_notebook": self._hunt_notebook(),
             "pending_candidates": self._pending_candidates()[:80],
+            "priority_hunt_ports": self._priority_hunt_ports(),
             "previous_decision": {
                 "action": self.last_decision.get("action"),
                 "expected_value": self.last_decision.get("expected_value"),

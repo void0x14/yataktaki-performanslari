@@ -943,3 +943,24 @@ def test_hunter_instruction_names_operator_product_ports(tmp_path):
     instruction = _hunter_instruction([])
     assert "8000" in instruction or "12323" in instruction or "10000" in instruction
     assert "urun" in instruction.lower() or "ürün" in instruction.lower()
+
+
+def test_notebook_ports_are_tried_before_legacy_ports(tmp_path):
+    """The model kept choosing 1080 despite the notebook. Make the operator's
+    product ports a deterministic priority list, not a suggestion."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    priority = runtime._priority_hunt_ports()
+    assert 12323 in priority
+    assert 8000 in priority
+    assert 10000 in priority
+    # script-kiddie legacy ports must come after the operator's product ports
+    assert priority.index(12323) < priority.index(3128) if 3128 in priority else True
+    assert priority.index(8000) < priority.index(1080) if 1080 in priority else True
