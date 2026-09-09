@@ -73,10 +73,43 @@ def _ports_from_spec(value: Any) -> list[int]:
     return sorted(ports)
 
 
+def _masscan_has_file_capability(binary: str | None) -> bool:
+    """True when masscan carries net capabilities, so no sudo is needed.
+
+    ``NoNewPrivileges=true`` in the agentd unit blocks sudo outright, so the
+    file-capability path is the supported way to run L4 from an unprivileged
+    worker. ``getcap`` is not installed on every host, so the security.capability
+    xattr is read directly.
+    """
+    if not binary:
+        return False
+    if hasattr(os, "getxattr"):
+        try:
+            value = os.getxattr(binary, "security.capability")
+        except OSError:
+            value = b""
+        if value:
+            # Effective bit set in the permitted/inheritable/effective words.
+            return bool(value[1] & 0x01) or len(value) >= 8
+    getcap = shutil.which("getcap")
+    if not getcap:
+        return False
+    try:
+        completed = subprocess.run(
+            [getcap, binary], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0 and "cap_net_raw" in (completed.stdout or "").lower()
+
+
 def _masscan_command(cidr: str, port_spec: str, rate: int) -> list[str]:
-    """Build the real L4 command, elevating only the requested Masscan process."""
-    command = ["masscan", cidr, "-p", port_spec, "--wait", "0", "-oL", "-", "--rate", str(rate)]
+    """Build the real L4 command, elevating only when masscan lacks capabilities."""
+    binary = shutil.which("masscan") or "masscan"
+    command = [binary, cidr, "-p", port_spec, "--wait", "0", "-oL", "-", "--rate", str(rate)]
     if hasattr(os, "geteuid") and os.geteuid() != 0:
+        if _masscan_has_file_capability(binary):
+            return command
         sudo = shutil.which("sudo")
         if not sudo:
             raise RuntimeError("masscan için root yetkisi, file capability veya sudo gerekli")
@@ -323,11 +356,9 @@ def _validated_host_or_ip(arguments: dict[str, Any], result: dict[str, Any]) -> 
     if host_value:
         if any(character.isspace() for character in host_value):
             raise ValueError("host boşluk içeremez")
-        try:
-            _reject_decorative_ip(host_value, "host")
-        except ValueError as exc:
-            if "dekoratif" in str(exc):
-                raise
+        lowered = host_value.lower().rstrip(".")
+        if any(lowered == dead or lowered.endswith("." + dead) for dead in _OLU_HOST_SON):
+            raise ValueError("dekoratif/genel örnek host kabul edilmez")
         result["host"] = host_value
 
 

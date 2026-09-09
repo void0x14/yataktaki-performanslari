@@ -196,3 +196,45 @@ def test_myip_source_is_collected_by_kahin_and_anchored_to_agent_evidence(tmp_pa
     assert result["source_provenance"] == "kahin-mirage-google-vision"
     assert result["observed_ips"] == ["9.9.9.9"]
     assert any(ref.endswith("kahin-myip-00000.png") for ref in result["evidence_refs"])
+
+
+def test_masscan_command_skips_sudo_when_file_capability_present(monkeypatch):
+    monkeypatch.setattr(ai_runtime.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(
+        ai_runtime.shutil, "which", lambda name: "/usr/bin/masscan" if name == "masscan" else None
+    )
+    monkeypatch.setattr(ai_runtime, "_masscan_has_file_capability", lambda binary: True)
+    command = ai_runtime._masscan_command("1.2.3.0/24", "3128", 1000)
+    assert command[0] == "/usr/bin/masscan"
+    assert "sudo" not in command
+
+
+def test_masscan_command_uses_sudo_without_capability(monkeypatch):
+    monkeypatch.setattr(ai_runtime.os, "geteuid", lambda: 1000)
+    def which(name):
+        return {"masscan": "/usr/bin/masscan", "sudo": "/usr/bin/sudo"}.get(name)
+    monkeypatch.setattr(ai_runtime.shutil, "which", which)
+    monkeypatch.setattr(ai_runtime, "_masscan_has_file_capability", lambda binary: False)
+    command = ai_runtime._masscan_command("1.2.3.0/24", "3128", 1000)
+    assert command[:3] == ["/usr/bin/sudo", "-n", "/usr/bin/masscan"]
+
+
+def test_validate_proxy_accepts_public_host_without_name_error():
+    """Regression: _validated_host_or_ip referenced an undefined helper and
+    crashed the whole worker when the AI finally reached L7 validation."""
+    accepted = validate_tool_arguments(
+        "validate_proxy",
+        {
+            "host": "138.124.79.148",
+            "port": 8080,
+            "target_url": "https://httpbin.org/ip",
+            "protocols": ["http_connect"],
+        },
+    )
+    assert accepted["host"] == "138.124.79.148"
+    assert accepted["port"] == 8080
+
+
+def test_validate_proxy_still_rejects_decorative_validation_target():
+    with pytest.raises(ValueError, match="genel örnek"):
+        AgentRuntime._target_from_args({"target_url": "https://example.com/"})
