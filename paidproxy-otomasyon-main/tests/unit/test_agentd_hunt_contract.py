@@ -794,3 +794,62 @@ def test_port_scan_full_range_is_used_when_requested(tmp_path):
     result = runtime._port_scan_live_ip({"ip": "193.233.126.126", "port_range": "1-65535"})
     assert seen["rng"] == "1-65535"
     assert result["scan_range"] == "1-65535"
+
+
+def test_candidate_queue_drains_without_waiting_for_planner(tmp_path):
+    """The planner must not be the bottleneck for mechanical validation:
+    queued candidates are validated by the runtime, not one per LLM turn."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._enqueue_candidates([
+        {"host": "193.233.126.126", "port": 22},
+        {"host": "193.233.126.126", "port": 8000},
+        {"host": "193.233.126.179", "port": 16866},
+    ])
+    probed: list[tuple[str, int]] = []
+
+    def fake_validate(host, port, target_url, protocols):
+        probed.append((host, port))
+        return {"protocols": protocols, "validated": [], "results": [], "egress": False}
+
+    runtime._validate_candidate_direct = fake_validate
+    drained = runtime._drain_candidate_queue(max_candidates=10)
+    assert len(probed) == 3
+    assert drained["checked"] == 3
+    assert runtime._pending_candidates() == []
+    assert drained["egress_hits"] == []
+
+
+def test_drain_reports_egress_hit_when_candidate_works(tmp_path):
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._enqueue_candidates([{"host": "1.2.3.4", "port": 3128}])
+
+    def fake_validate(host, port, target_url, protocols):
+        return {
+            "protocols": protocols,
+            "validated": [{"protocol": "http_connect", "egress_confirmed": True}],
+            "results": [{"protocol": "http_connect", "egress_confirmed": True}],
+            "egress": True,
+        }
+
+    runtime._validate_candidate_direct = fake_validate
+    drained = runtime._drain_candidate_queue(max_candidates=10)
+    assert drained["checked"] == 1
+    assert drained["egress_hits"] == [{"host": "1.2.3.4", "port": 3128}]

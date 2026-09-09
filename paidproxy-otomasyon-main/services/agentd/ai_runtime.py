@@ -765,6 +765,52 @@ class AgentRuntime:
             if self._candidate_key(item) != self._candidate_key(candidate)
         ]
 
+    def _validate_candidate_direct(
+        self,
+        host: str,
+        port: int,
+        target_url: str,
+        protocols: list[str],
+    ) -> dict[str, Any]:
+        """Validate one queued candidate without going through the planner."""
+        return self._validate_proxy({
+            "host": host,
+            "port": port,
+            "target_url": target_url,
+            "protocols": protocols,
+        })
+
+    def _drain_candidate_queue(
+        self,
+        max_candidates: int = 64,
+        target_url: str = "https://httpbin.org/ip",
+        protocols: tuple[str, ...] = ("http_connect", "socks5", "socks4", "socks4a"),
+    ) -> dict[str, Any]:
+        """Mechanically validate queued candidates; no LLM turn per port."""
+        checked = 0
+        egress_hits: list[dict[str, Any]] = []
+        while checked < max_candidates and not self.stopped():
+            pending = self._pending_candidates()
+            if not pending:
+                break
+            candidate = pending[0]
+            host = str(candidate.get("host") or "")
+            port = int(candidate.get("port") or 0)
+            if not host or not port:
+                self._mark_candidate_validated(candidate)
+                continue
+            try:
+                result = self._validate_candidate_direct(host, port, target_url, list(protocols))
+            except Exception as exc:  # a dead candidate must not kill the drain
+                result = {"results": [], "validated": [], "error": f"{type(exc).__name__}: {exc}"}
+            checked += 1
+            if any(item.get("egress_confirmed") for item in (result.get("results") or [])) or any(
+                item.get("egress_confirmed") for item in (result.get("validated") or [])
+            ):
+                egress_hits.append({"host": host, "port": port})
+            self._mark_candidate_validated(candidate)
+        return {"checked": checked, "egress_hits": egress_hits, "pending": len(self._pending_candidates())}
+
     def _hunt_notebook(self) -> dict[str, Any]:
         return _read_hunt_notebook()
 
@@ -1321,6 +1367,19 @@ class AgentRuntime:
             result = self.catalog.invoke(name, arguments)
             if name == "validate_proxy":
                 self._mark_candidate_validated(arguments)
+            if name == "port_scan_live_ip":
+                # Mechanical work must not wait for the planner: validate every
+                # candidate this scan produced before the next LLM turn.
+                drain = self._drain_candidate_queue()
+                result = dict(result)
+                result["auto_validated"] = drain["checked"]
+                result["egress_hits"] = drain["egress_hits"]
+                result["pending_after_drain"] = drain["pending"]
+                if drain["egress_hits"]:
+                    result["working_note"] = (
+                        str(result.get("working_note", ""))
+                        + f" Otomatik L7: {len(drain['egress_hits'])} aday gerçek çıkış verdi."
+                    )
             self.last_tool_result = dict(result)
             self.observations.append({"tool": name, "result": result, "at": _utc()})
             self.observations = self.observations[-100:]
