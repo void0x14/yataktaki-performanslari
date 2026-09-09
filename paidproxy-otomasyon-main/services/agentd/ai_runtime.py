@@ -794,10 +794,41 @@ class AgentRuntime:
         )
         return decision
 
+    @staticmethod
+    def _flat_tool_arguments(decision: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        """Accept the planner's flat {"tool_arguments": {name: args}} shape.
+
+        The model sometimes drops requested_tools/resource_plan and returns the
+        arguments directly, or a list of argument objects for one tool. That is
+        still a real, executable intent; silently waiting forever is a bug.
+        """
+        flat = decision.get("tool_arguments")
+        if not isinstance(flat, dict):
+            return []
+        expanded: list[tuple[str, dict[str, Any]]] = []
+        for raw_name, value in flat.items():
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        expanded.append((name, dict(item)))
+            elif isinstance(value, dict):
+                expanded.append((name, dict(value)))
+        return expanded
+
     def _requested_tools(self, decision: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         names = decision.get("requested_tools") or []
         if isinstance(names, str):
             names = [names]
+        if not names:
+            # Keep one dict per occurrence so repeated tools (e.g. validating a
+            # list of candidate IPs) each carry their own arguments.
+            names = [
+                {"name": name, "tool_arguments": arguments}
+                for name, arguments in self._flat_tool_arguments(decision)
+            ]
         resource_plan = decision.get("resource_plan") or {}
         args_by_tool = resource_plan.get("tool_arguments", {}) if isinstance(resource_plan, dict) else {}
         if not isinstance(args_by_tool, dict):

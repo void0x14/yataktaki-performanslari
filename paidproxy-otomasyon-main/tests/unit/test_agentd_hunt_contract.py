@@ -238,3 +238,66 @@ def test_validate_proxy_accepts_public_host_without_name_error():
 def test_validate_proxy_still_rejects_decorative_validation_target():
     with pytest.raises(ValueError, match="genel örnek"):
         AgentRuntime._target_from_args({"target_url": "https://example.com/"})
+
+
+def test_flat_tool_arguments_are_accepted_as_requested_tools(tmp_path):
+    """Regression: the planner sometimes emits {"tool_arguments": {...}}
+    without requested_tools/resource_plan; the runtime must still execute it."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.observations.append({
+        "tool": "browse_public_source",
+        "result": {
+            "url": "https://bgp.he.net/AS209207",
+            "status": 200,
+            "evidence_refs": ["agent://agent-test/outputs/source.bin"],
+            "observed_ips": ["138.124.79.148"],
+            "observed_cidrs": ["138.124.79.0/24"],
+            "observed_asns": [209207],
+        },
+    })
+    tools = runtime._requested_tools({
+        "action": "research",
+        "tool_arguments": {
+            "masscan_liveness": {"cidr": "138.124.79.0/24", "ports": [3128], "rate": 500},
+        },
+    })
+    assert tools == [("masscan_liveness", {"cidr": "138.124.79.0/24", "ports": [3128], "rate": 500})]
+
+
+def test_flat_tool_arguments_expand_list_of_targets(tmp_path):
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.observations.append({
+        "tool": "masscan_liveness",
+        "result": {
+            "discovered": [
+                {"ip": "138.124.79.148", "port": 8080},
+                {"ip": "138.124.79.89", "port": 8080},
+            ]
+        },
+    })
+    tools = runtime._requested_tools({
+        "tool_arguments": {
+            "validate_proxy": [
+                {"host": "138.124.79.148", "port": 8080, "target_url": "https://httpbin.org/ip", "protocols": ["http_connect"]},
+                {"host": "138.124.79.89", "port": 8080, "target_url": "https://httpbin.org/ip", "protocols": ["http_connect"]},
+            ],
+        },
+    })
+    assert [name for name, _ in tools] == ["validate_proxy", "validate_proxy"]
+    assert tools[1][1]["host"] == "138.124.79.89"
