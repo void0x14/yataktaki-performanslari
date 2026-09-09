@@ -173,10 +173,68 @@ ARGUMENT_CONTRACTS: dict[str, dict[str, Any]] = {
 
 _SUPPORTED_PROTOCOLS = frozenset({"http_connect", "socks5", "socks4", "socks4a"})
 
+_HUNT_NOTEBOOK_CANDIDATES = (
+    Path(__file__).resolve().parents[2] / "var" / "port-araliklari" / "av-defteri.txt",
+    Path(__file__).resolve().parents[2] / "config" / "hunt" / "av-defteri.txt",
+)
+_HUNT_NOTEBOOK = _HUNT_NOTEBOOK_CANDIDATES[0]
+
+
+def _read_hunt_notebook(path: Path | None = None) -> dict[str, Any]:
+    """Operator hunt notebook: port/band scent that must be read on every decision."""
+    if path:
+        notebook = Path(path)
+    else:
+        notebook = next(
+            (candidate for candidate in _HUNT_NOTEBOOK_CANDIDATES if candidate.is_file()),
+            _HUNT_NOTEBOOK_CANDIDATES[0],
+        )
+    ports: list[int] = []
+    bands: list[str] = []
+    notes: list[str] = []
+    try:
+        lines = notebook.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"ports": ports, "bands": bands, "notes": notes, "path": str(notebook)}
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            notes.append(line.lstrip("# ").strip())
+            continue
+        head, _, tail = line.partition(" ")
+        head = head.strip().upper()
+        tail = tail.strip()
+        if head == "PORT":
+            try:
+                port = int(tail)
+            except ValueError:
+                continue
+            if 1 <= port <= 65535 and port not in ports:
+                ports.append(port)
+        elif head == "BAND" and tail and tail not in bands:
+            bands.append(tail)
+    return {"ports": ports, "bands": bands, "notes": notes, "path": str(notebook)}
+
+
 _CANONICAL_PORT_BANDS = (
     Path(__file__).resolve().parents[2] / "var" / "port-araliklari" / "yuksek.txt"
 )
-_KLASIK_PORTLAR = ("80", "443", "1080", "3128", "3129", "8000", "8080", "8118", "8888")
+# Operator field notes (2026-09-09): real paid-proxy products rotate/sticky on
+# vendor-specific ports; 3128 alone is the script-kiddie graveyard.
+#   Oxylabs DC   rotate 8000  / sticky 8001-63000
+#   Decodo DC    rotate 10000 / sticky 10001-63000
+#   IPRoyal DC   rotate 12323 HTTP, 12324 SOCKS5
+#   ProxyScrape  rotate 3129 HTTP, 1081 SOCKS5
+#   Residential  7777 rotate; gateway variants 443, 7000, 823, 6060
+# Sticky-IP products start at 10K and end at 63K.
+_KLASIK_PORTLAR = (
+    "80", "443", "823", "1080", "1081", "3128", "3129",
+    "6060", "7000", "7777", "8000", "8001", "8080", "8118", "8888",
+    "10000", "10001", "12323", "12324",
+)
+_URUN_PORT_BANTLARI = ("8001-63000", "10001-63000")
 _AV_SOURCE_HOSTS = (
     "bgp.he.net",
     "myip.ms",
@@ -260,7 +318,14 @@ def _hunter_instruction(observations: list[dict[str, Any]]) -> str:
 
 
 def _allowed_port_bands() -> list[str]:
-    return list(_KLASIK_PORTLAR) + list(bant_listesi(_CANONICAL_PORT_BANDS))
+    notebook = _read_hunt_notebook()
+    return (
+        list(_KLASIK_PORTLAR)
+        + list(_URUN_PORT_BANTLARI)
+        + [str(port) for port in notebook["ports"]]
+        + list(notebook["bands"])
+        + list(bant_listesi(_CANONICAL_PORT_BANDS))
+    )
 
 
 def _port_intervals(value: Any) -> list[tuple[int, int]]:
@@ -628,6 +693,9 @@ class AgentRuntime:
             ("write", "delivery"),
         )
 
+    def _hunt_notebook(self) -> dict[str, Any]:
+        return _read_hunt_notebook()
+
     def _available_tools_for_phase(self) -> list[dict[str, Any]]:
         tools = list(self.catalog.describe())
         if self._runtime_preflight_done:
@@ -724,6 +792,7 @@ class AgentRuntime:
             "observations": self.observations[-12:],
             "last_tool_result": self.last_tool_result,
             "operator_directives": self.operator_directives[-20:],
+            "operator_hunt_notebook": self._hunt_notebook(),
             "previous_decision": {
                 "action": self.last_decision.get("action"),
                 "expected_value": self.last_decision.get("expected_value"),

@@ -1,0 +1,29 @@
+# Av Defteri — operatör kokusu (her kararda okunur)
+# Format: boş satır ve # ile başlayan satırlar yorumdur.
+
+## Port kokusu (2026-09-09 operatör)
+# 3128 tek başına script-kiddie mezarlığıdır. Gerçek ürün portları:
+#   Oxylabs DC   rotate 8000  / sticky 8001-63000
+#   Decodo DC    rotate 10000 / sticky 10001-63000
+#   IPRoyal DC   rotate 12323 HTTP, 12324 SOCKS5
+#   ProxyScrape  rotate 3129 HTTP, 1081 SOCKS5
+#   Residential  7777 rotate; gateway varyantları 443, 7000, 823, 6060
+# Sticky-IP ürünleri 10K'da başlar, 63K'da biter.
+PORT 8000
+PORT 8001
+PORT 10000
+PORT 10001
+PORT 12323
+PORT 12324
+PORT 3129
+PORT 1081
+PORT 7777
+PORT 7000
+PORT 823
+PORT 6060
+BAND 8001-63000
+BAND 10001-63000
+
+## Sınıflandırma
+# rotate: port değişir, kimlik sabit kalır
+# sticky: port aralığından IP başına sabit port atanır

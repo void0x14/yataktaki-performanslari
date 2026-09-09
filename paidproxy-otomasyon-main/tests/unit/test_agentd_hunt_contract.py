@@ -324,3 +324,71 @@ def test_operator_directive_supplies_hunt_provenance(tmp_path):
     assert runtime._target_provenance_error(
         "masscan_liveness", {"cidr": "138.124.79.0/24", "ports": [8080]}
     ) is None
+
+
+def test_operator_product_specific_proxy_ports_are_allowed():
+    """Operator scent: real paid-proxy vendors rotate/sticky on these ports.
+    3128 alone is the script-kiddie graveyard; these are the product ports."""
+    for port in (1081, 3129, 8000, 8001, 7777, 12323, 12324, 7000, 823, 6060, 10000, 10001, 63000):
+        accepted = validate_tool_arguments(
+            "expand_live_ip", {"ip": "9.9.9.9", "ports": [port]}
+        )
+        assert accepted["ports"] == [port], f"port {port} must be allowed"
+
+
+def test_operator_sticky_port_band_is_allowed():
+    """Sticky-IP paid proxies start at 10K and end at 63K."""
+    accepted = validate_tool_arguments(
+        "expand_live_ip", {"ip": "9.9.9.9", "ports": ["10000-63000"]}
+    )
+    assert accepted["ports"] == ["10000-63000"]
+
+
+def test_script_kiddie_port_is_still_a_valid_first_bite_but_not_the_only_one():
+    accepted = validate_tool_arguments(
+        "masscan_liveness", {"cidr": "9.9.9.0/24", "ports": [3128]}
+    )
+    assert accepted["ports"] == [3128]
+
+
+def test_hunt_notes_file_supplies_operator_port_scent(tmp_path):
+    """The operator's hunt notebook must be read on every decision, so vendor
+    port knowledge survives restarts instead of living only in chat."""
+    notes = tmp_path / "var" / "port-araliklari" / "av-defteri.txt"
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    notes.write_text(
+        "# yorum\nPORT 12323\nPORT 12324\nBAND 8001-63000\n",
+        encoding="utf-8",
+    )
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    scent = runtime._hunt_notebook()
+    assert 12323 in scent["ports"]
+    assert 12324 in scent["ports"]
+    assert "8001-63000" in scent["bands"]
+
+
+def test_hunt_notes_ports_are_usable_as_provenance(tmp_path):
+    notes = tmp_path / "var" / "port-araliklari" / "av-defteri.txt"
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    notes.write_text("PORT 12323\n", encoding="utf-8")
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    accepted = validate_tool_arguments(
+        "masscan_liveness", {"cidr": "9.9.9.0/24", "ports": [12323]}
+    )
+    assert accepted["ports"] == [12323]
