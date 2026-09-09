@@ -644,3 +644,43 @@ def test_port_scan_result_is_exposed_as_pending_work(tmp_path):
         {"host": "193.233.126.126", "port": 22},
         {"host": "193.233.126.126", "port": 8000},
     ]
+
+
+def test_port_scan_default_timeout_is_not_so_aggressive_it_misses_ports(tmp_path):
+    """Measured on the real VDS: timeout=0.5 missed 5432/8000/16866 that
+    timeout=1.5 found. The default must not silently drop real open ports."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    seen_timeouts = []
+    original = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(addr, timeout=None):
+        seen_timeouts.append(timeout)
+        if addr[1] == 16866:
+            return FakeConn()
+        raise OSError("closed")
+
+    rt.socket.create_connection = fake
+    try:
+        runtime._port_scan_live_ip({
+            "ip": "193.233.126.89",
+            "port_range": "16866-16866",
+            "concurrency": 16,
+        })
+    finally:
+        rt.socket.create_connection = original
+    assert seen_timeouts, "scan must probe"
+    assert min(seen_timeouts) >= 1.0, f"default timeout too aggressive: {min(seen_timeouts)}"

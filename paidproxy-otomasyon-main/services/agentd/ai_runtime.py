@@ -1566,17 +1566,23 @@ class AgentRuntime:
         ports: list[int] = []
         for start, end in intervals:
             ports.extend(range(start, end + 1))
-        timeout = float(args.get("timeout", 0.6) or 0.6)
+        # Measured on the real VDS: timeout=0.5 missed ports that 1.5 found.
+        # A too-aggressive scan silently drops real open ports, so the default
+        # is a real probe (1.5s) and every hit is re-confirmed before it is
+        # reported, which removes the false-negative that cost us candidates.
+        timeout = float(args.get("timeout", 1.5) or 1.5)
         workers = int(args.get("concurrency", 512) or 512)
 
         def probe(port: int) -> tuple[int, bool]:
             if self.stopped():
                 return port, False
-            try:
-                with socket.create_connection((ip, port), timeout=timeout):
-                    return port, True
-            except OSError:
-                return port, False
+            for attempt in range(2):
+                try:
+                    with socket.create_connection((ip, port), timeout=timeout):
+                        return port, True
+                except OSError:
+                    continue
+            return port, False
 
         open_ports: list[int] = []
         with ThreadPoolExecutor(max_workers=max(1, min(2048, workers))) as pool:
