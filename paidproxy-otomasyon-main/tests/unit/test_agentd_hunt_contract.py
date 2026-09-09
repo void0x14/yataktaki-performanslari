@@ -978,18 +978,20 @@ def test_recovery_restarts_persisted_running_agent(tmp_path):
     agent = store.create_agent("gezinme", "kalici", None, "devam et")
     store.update_agent(agent["agent_id"], state="running", pid=12345, process_group=12345)
 
+    import asyncio
+
     supervisor = sup.Supervisor.__new__(sup.Supervisor)
     supervisor.root = root
     supervisor.store = store
     supervisor._handles = {}
     restarted: list[str] = []
 
-    def fake_start(agent_id: str) -> dict:
-        restarted.append(agent_id)
-        return {"agent_id": agent_id, "pid": 999}
+    async def fake_start(command: dict) -> dict:
+        restarted.append(command["agent_id"])
+        return {"agent_id": command["agent_id"], "pid": 999}
 
     supervisor._start = fake_start
-    supervisor._recover_persisted_processes()
+    asyncio.run(supervisor._recover_persisted_processes())
 
     refreshed = store.get_agent(agent["agent_id"])
     assert restarted == [agent["agent_id"]], "persisted running agent must be restarted"

@@ -113,8 +113,9 @@ class Supervisor:
             int(handover_old_agentd_pid) if handover_old_agentd_pid is not None else None
         )
         if self._handover_socket is None:
-            self._recover_persisted_processes()
+            self._recovery_pending = True
         else:
+            self._recovery_pending = False
             if self._handover_old_agentd_pid is None:
                 self._worker_io_executor.shutdown(wait=False, cancel_futures=True)
                 raise HandoverError("handover socket requires --old-agentd-pid")
@@ -126,7 +127,7 @@ class Supervisor:
             )
             self._install_adopted_workers(self._handover_session.adopted)
 
-    def _recover_persisted_processes(self) -> None:
+    async def _recover_persisted_processes(self) -> None:
         """Bring persisted agents back to life after an agentd restart.
 
         Previously every persisted running agent was parked in "unknown" and
@@ -153,7 +154,7 @@ class Supervisor:
                 next_action="worker restart",
             )
             try:
-                self._start(agent_id)
+                await self._start({"agent_id": agent_id, "reason": "supervisor-recovery"})
             except Exception as exc:  # noqa: BLE001 - recovery must report, not crash
                 self.store.update_agent(
                     agent_id,
@@ -509,6 +510,9 @@ class Supervisor:
             return
         self._loop = asyncio.get_running_loop()
         self._closed = False
+        if getattr(self, "_recovery_pending", False):
+            self._recovery_pending = False
+            await self._recover_persisted_processes()
         await self._attach_adopted_workers()
         if self._handover_session is not None:
             await self._wait_for_adopted_tasks_prepared()
