@@ -196,7 +196,7 @@ _OLU_HOST_SON = ("example.com", "example.net", "example.org", "whatismyip.com", 
 
 _PUBLIC_IPV4_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])")
 _PUBLIC_CIDR_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])(?![0-9])")
-_PUBLIC_ASN_RE = re.compile(r"(?i)(?:\bAS|\bASN|aut-num[^0-9]{0,8})([0-9]{1,10})")
+_PUBLIC_ASN_RE = re.compile(r"(?i)(?:\bASN\b|\bAS|aut-num[^0-9]{0,8})[^0-9]{0,4}([0-9]{1,10})")
 
 
 def _public_source_facts(body: str) -> dict[str, list[Any]]:
@@ -1013,6 +1013,19 @@ class AgentRuntime:
                 return
             if network.version == 4 and network.is_global:
                 facts["cidrs"].add(network)
+
+        # The operator is an authoritative scent source. When they name a CIDR,
+        # ASN or IP, the hunter may act on it instead of re-browsing from zero.
+        for directive in self.operator_directives:
+            text = str(directive.get("instruction") or directive.get("text") or "")
+            if not text:
+                continue
+            for value in _PUBLIC_CIDR_RE.findall(text):
+                add_cidr(value)
+            for value in _PUBLIC_ASN_RE.findall(text):
+                add_asn(value)
+            for value in _PUBLIC_IPV4_RE.findall(text):
+                add_ip(value, "source_ips")
 
         for observation in self.observations:
             tool = observation.get("tool")

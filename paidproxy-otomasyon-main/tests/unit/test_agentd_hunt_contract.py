@@ -301,3 +301,26 @@ def test_flat_tool_arguments_expand_list_of_targets(tmp_path):
     })
     assert [name for name, _ in tools] == ["validate_proxy", "validate_proxy"]
     assert tools[1][1]["host"] == "138.124.79.89"
+
+
+def test_operator_directive_supplies_hunt_provenance(tmp_path):
+    """The operator is an authoritative scent source: when they state a CIDR
+    and ASN, the hunter must be able to act on it without re-browsing."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.operator_directives.append({
+        "instruction": "Damar: 138.124.79.0/24 ASN 209207. masscan 8080 yap.",
+    })
+    facts = runtime._hunt_facts()
+    assert "138.124.79.0/24" in {str(c) for c in facts["cidrs"]}
+    assert 209207 in facts["asns"]
+    assert runtime._target_provenance_error(
+        "masscan_liveness", {"cidr": "138.124.79.0/24", "ports": [8080]}
+    ) is None
