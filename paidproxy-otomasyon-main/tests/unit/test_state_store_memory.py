@@ -34,3 +34,19 @@ def test_events_after_reads_from_disk_beyond_memory_window(tmp_path):
     got = store.events_after(0, "a1")
     assert len(got) >= store.EVENT_MEMORY_LIMIT + 21
     assert got[0]["seq"] == first["seq"]
+
+
+def test_event_load_never_accumulates_full_history_in_memory(tmp_path):
+    """Peak memory must stay bounded: the loader may not build a list of every
+    historical event before trimming to the window."""
+    root = tmp_path / "agentd"
+    root.mkdir()
+    events = root / "events.jsonl"
+    total = 20000
+    with events.open("w", encoding="utf-8") as h:
+        for i in range(1, total + 1):
+            h.write(json.dumps({"kind": "event", "seq": i, "agent_id": "a1"}) + "\n")
+    store = StateStore(root)
+    assert len(store._events) == store.EVENT_MEMORY_LIMIT
+    assert store._next_seq == total + 1
+    assert int(store._events[0]["seq"]) == total - store.EVENT_MEMORY_LIMIT + 1

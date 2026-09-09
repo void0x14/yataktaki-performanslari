@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -27,7 +28,9 @@ class StateStore:
         self.events_file = self.root / "events.jsonl"
         self._lock = threading.RLock()
         self._agents: dict[str, dict[str, Any]] = {}
-        self._events: list[dict[str, Any]] = []
+        # Bounded ring: a multi-hundred-megabyte log must never be materialized
+        # as a full list even transiently, or the VDS peaks near 1 GB on boot.
+        self._events: deque[dict[str, Any]] = deque(maxlen=self.EVENT_MEMORY_LIMIT)
         self._event_ids: set[str] = set()
         self._next_seq = 1
         self.root.mkdir(parents=True, exist_ok=True)
@@ -93,17 +96,13 @@ class StateStore:
                         self._next_seq = max(self._next_seq, seq + 1)
                 except (ValueError, TypeError, json.JSONDecodeError):
                     corruption = corruption or f"events line {line_number} is invalid"
-        self._events.sort(key=lambda event: int(event.get("seq", 0) or 0))
-        # The full history stays on disk; memory keeps only the newest window so a
-        # multi-hundred-megabyte event log cannot pin the whole VDS in RSS.
-        if len(self._events) > self.EVENT_MEMORY_LIMIT:
-            kept = self._events[-self.EVENT_MEMORY_LIMIT:]
-            self._events = kept
-            self._event_ids = {
-                str(event.get("event_id", "") or "")
-                for event in kept
-                if str(event.get("event_id", "") or "")
-            }
+        # The deque already holds only the newest window; reindex its ids so the
+        # duplicate guard matches exactly what is retained in memory.
+        self._event_ids = {
+            str(event.get("event_id", "") or "")
+            for event in self._events
+            if str(event.get("event_id", "") or "")
+        }
         return corruption
 
     def _write_agents(self) -> None:
@@ -236,13 +235,15 @@ class StateStore:
             self._events.append(payload)
             if event_id:
                 self._event_ids.add(event_id)
-            if len(self._events) > self.EVENT_MEMORY_LIMIT:
-                dropped = self._events[:-self.EVENT_MEMORY_LIMIT]
-                self._events = self._events[-self.EVENT_MEMORY_LIMIT:]
-                for old in dropped:
-                    old_id = str(old.get("event_id", "") or "")
-                    if old_id:
-                        self._event_ids.discard(old_id)
+            # deque(maxlen=...) evicts the oldest entry automatically; drop its
+            # id from the duplicate index so the guard tracks retained events.
+            if len(self._events) == self._events.maxlen:
+                evicted = self._events[0]
+                evicted_id = str(evicted.get("event_id", "") or "")
+                if evicted_id and evicted_id not in {
+                    str(event.get("event_id", "") or "") for event in self._events
+                }:
+                    self._event_ids.discard(evicted_id)
             with self.events_file.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
                 handle.flush()

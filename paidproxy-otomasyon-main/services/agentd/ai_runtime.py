@@ -663,6 +663,8 @@ class AgentRuntime:
         self._directive_offset = 0
         self.operator_directives: list[dict[str, Any]] = []
         self.step = 0
+        self._candidate_queue: list[dict[str, Any]] = []
+        self._validated_candidates: set[tuple[str, int]] = set()
         self._decision_phase = "hunt"
         self._runtime_preflight_done = False
         self._source_decision_attempts = 0
@@ -727,6 +729,41 @@ class AgentRuntime:
             self._publish_proxy,
             ("write", "delivery"),
         )
+
+    @staticmethod
+    def _candidate_key(candidate: dict[str, Any]) -> tuple[str, int]:
+        return (str(candidate.get("host") or candidate.get("ip") or ""), int(candidate.get("port") or 0))
+
+    def _enqueue_candidates(self, candidates: list[dict[str, Any]]) -> int:
+        """Queue every open-port candidate so validation does not depend on the
+        planner remembering to enumerate all of them."""
+        added = 0
+        existing = {self._candidate_key(item) for item in self._candidate_queue}
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            key = self._candidate_key(candidate)
+            if not key[0] or not key[1] or key in existing or key in self._validated_candidates:
+                continue
+            existing.add(key)
+            self._candidate_queue.append({"host": key[0], "port": key[1]})
+            added += 1
+        return added
+
+    def _pending_candidates(self) -> list[dict[str, Any]]:
+        return [
+            dict(candidate)
+            for candidate in self._candidate_queue
+            if self._candidate_key(candidate) not in self._validated_candidates
+        ]
+
+    def _mark_candidate_validated(self, candidate: dict[str, Any]) -> None:
+        self._validated_candidates.add(self._candidate_key(candidate))
+        self._candidate_queue = [
+            item
+            for item in self._candidate_queue
+            if self._candidate_key(item) != self._candidate_key(candidate)
+        ]
 
     def _hunt_notebook(self) -> dict[str, Any]:
         return _read_hunt_notebook()
@@ -828,6 +865,7 @@ class AgentRuntime:
             "last_tool_result": self.last_tool_result,
             "operator_directives": self.operator_directives[-20:],
             "operator_hunt_notebook": self._hunt_notebook(),
+            "pending_candidates": self._pending_candidates()[:80],
             "previous_decision": {
                 "action": self.last_decision.get("action"),
                 "expected_value": self.last_decision.get("expected_value"),
@@ -846,7 +884,9 @@ class AgentRuntime:
                 "Masscan bir canlı IP verdiyse port_scan_live_ip ile o IP'nin TÜM "
                 "açık portlarını çıkar; her açık port bağımsız adaydır ve tek tek "
                 "validate_proxy edilir. Bir port ölü diye IP'yi bırakma. "
-                "Sabit skor üretme. "
+                "Sabit skor üretme. snapshot.pending_candidates BOŞ DEĞİLSE "
+                "öncelikle onları validate_proxy ile tek tek bitir; kuyruk "
+                "boşalana kadar yeni hedefe geçme. "
                 "Gerçek bir HTTP(S) hedefini target_url alanında kendin seçmeden L7 doğrulama "
                 "isteme. validate_proxy için protocols alanında hangi protokolleri deneyeceğini "
                 "açıkça seç; protokol listesi eksikse araç çağrısı yapma. publish_proxy için "
@@ -1279,6 +1319,8 @@ class AgentRuntime:
         )
         try:
             result = self.catalog.invoke(name, arguments)
+            if name == "validate_proxy":
+                self._mark_candidate_validated(arguments)
             self.last_tool_result = dict(result)
             self.observations.append({"tool": name, "result": result, "at": _utc()})
             self.observations = self.observations[-100:]
@@ -1545,6 +1587,7 @@ class AgentRuntime:
                     open_ports.append(port)
         open_ports.sort()
         candidates = self._candidates_from_ports(ip, open_ports)
+        self._enqueue_candidates(candidates)
         result_path = self.output_dir / f"portscan-{self.step:05d}.json"
         _json_write(result_path, {
             "ip": ip,

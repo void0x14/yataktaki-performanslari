@@ -574,3 +574,73 @@ def test_initial_input_live_ips_are_valid_port_scan_provenance(tmp_path):
     assert runtime._target_provenance_error(
         "port_scan_live_ip", {"ip": "193.233.126.126"}
     ) is None
+
+
+def test_pending_candidates_are_drained_without_llm_discretion(tmp_path):
+    """Every candidate produced by a port scan must eventually be validated.
+    The runtime must track the queue itself instead of hoping the planner
+    remembers to list all 36 of them."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._enqueue_candidates([
+        {"host": "193.233.126.126", "port": 22},
+        {"host": "193.233.126.126", "port": 8000},
+        {"host": "193.233.126.179", "port": 16866},
+    ])
+    assert runtime._pending_candidates() == [
+        {"host": "193.233.126.126", "port": 22},
+        {"host": "193.233.126.126", "port": 8000},
+        {"host": "193.233.126.179", "port": 16866},
+    ]
+    runtime._mark_candidate_validated({"host": "193.233.126.126", "port": 22})
+    assert runtime._pending_candidates() == [
+        {"host": "193.233.126.126", "port": 8000},
+        {"host": "193.233.126.179", "port": 16866},
+    ]
+
+
+def test_port_scan_result_is_exposed_as_pending_work(tmp_path):
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    original = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(addr, timeout=None):
+        if addr[1] in (22, 8000):
+            return FakeConn()
+        raise OSError("closed")
+
+    rt.socket.create_connection = fake
+    try:
+        result = runtime._port_scan_live_ip({
+            "ip": "193.233.126.126",
+            "port_range": "1-65535",
+            "concurrency": 1024,
+            "timeout": 0.05,
+        })
+    finally:
+        rt.socket.create_connection = original
+    assert result["candidate_count"] == 2
+    assert runtime._pending_candidates() == [
+        {"host": "193.233.126.126", "port": 22},
+        {"host": "193.233.126.126", "port": 8000},
+    ]
