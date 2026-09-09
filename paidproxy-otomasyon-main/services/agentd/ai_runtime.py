@@ -1563,21 +1563,85 @@ class AgentRuntime:
         return data
 
     def _proxy_get(self, sock: socket.socket, target: dict[str, Any]) -> dict[str, Any]:
+        """Fetch the real target through the candidate and prove it is the target.
+
+        A non-proxy web port happily answers with its own 200/404 page, so a bare
+        status code is not egress evidence. The reply must carry the target's own
+        payload (host echo or target-specific marker), otherwise the candidate is
+        just an open web server and ``egress_confirmed`` stays false.
+        """
         host = str(target["host"])
         path = str(target["path"])
         sock.sendall(
             f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
             "Connection: close\r\nUser-Agent: paidproxy-agentd/1\r\n\r\n".encode()
         )
-        headers = self._read_headers(sock)
+        raw = self._read_headers(sock)
+        header_blob, _, buffered_body = raw.partition(b"\r\n\r\n")
+        headers = header_blob
         first = headers.split(b"\r\n", 1)[0].decode("latin1", errors="replace")
         match = re.search(r"HTTP/\d(?:\.\d)?\s+(\d+)", first)
         status = int(match.group(1)) if match else None
+        body = buffered_body + self._read_body(sock, headers)
+        lowered = body.decode("latin1", errors="replace").lower()
+        server = ""
+        for line in headers.split(b"\r\n")[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"server":
+                server = value.strip().decode("latin1", errors="replace")
+                break
+        # The target itself must speak: httpbin echoes the caller origin, and any
+        # real proxied response echoes the requested Host or a target marker.
+        payload_confirms_target = bool(
+            body
+            and (
+                host.lower() in lowered
+                or '"origin"' in lowered
+                or "httpbin" in lowered
+                or b"<html" not in body.lower()[:512]
+            )
+        )
+        origin_page = b"<!doctype html" in body.lower()[:64] or b"<html" in body.lower()[:64]
         return {
             "http_status": status,
             "response_line": first,
-            "egress_confirmed": status is not None and 200 <= status < 500,
+            "server": server,
+            "body_preview": body[:200].decode("latin1", errors="replace"),
+            "egress_confirmed": bool(
+                status is not None
+                and 200 <= status < 400
+                and body
+                and payload_confirms_target
+                and not origin_page
+            ),
         }
+
+    @staticmethod
+    def _read_body(sock: socket.socket, headers: bytes, limit: int = 8192) -> bytes:
+        """Read a bounded response body after headers, honoring Content-Length."""
+        length = 0
+        for line in headers.split(b"\r\n")[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"content-length":
+                try:
+                    length = int(value.strip())
+                except ValueError:
+                    length = 0
+                break
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            while total < min(limit, length or limit):
+                chunk = sock.recv(min(4096, limit - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if length and total >= length:
+                    break
+        except OSError:
+            pass
+        return b"".join(chunks)
 
     def _probe_protocol(self, host: str, port: int, protocol: str, target: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()

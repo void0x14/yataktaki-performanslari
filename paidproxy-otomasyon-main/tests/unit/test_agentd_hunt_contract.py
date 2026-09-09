@@ -392,3 +392,44 @@ def test_hunt_notes_ports_are_usable_as_provenance(tmp_path):
         "masscan_liveness", {"cidr": "9.9.9.0/24", "ports": [12323]}
     )
     assert accepted["ports"] == [12323]
+
+
+def test_proxy_get_does_not_accept_origin_server_page_as_egress(monkeypatch):
+    """Regression: a non-proxy web port answering 200/404 with its own page
+    must never be counted as confirmed egress. Only the real target's body does."""
+    runtime = AgentRuntime(
+        root="/tmp/egress-test",
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+
+    class FakeSock:
+        def __init__(self, payload):
+            self.payload = payload
+            self.sent = b""
+        def sendall(self, data):
+            self.sent += data
+        def recv(self, _n):
+            chunk, self.payload = self.payload, b""
+            return chunk
+
+    # A random web server answering with its own HTML, not httpbin's JSON.
+    fake = FakeSock(
+        b"HTTP/1.1 200 OK\r\nServer: nginx/1.31.5\r\nContent-Type: text/html\r\n"
+        b"Content-Length: 40\r\n\r\n<!doctype html><html>nginx page</html>"
+    )
+    target = {"host": "httpbin.org", "port": 80, "path": "/ip", "scheme": "http"}
+    result = runtime._proxy_get(fake, target)
+    assert result["egress_confirmed"] is False, "origin server page must not count as egress"
+
+    # A real proxy answer carries the target's own payload.
+    real = FakeSock(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        b"Content-Length: 30\r\n\r\n{\"origin\": \"203.0.113.7\"}"
+    )
+    ok = runtime._proxy_get(real, target)
+    assert ok["egress_confirmed"] is True
