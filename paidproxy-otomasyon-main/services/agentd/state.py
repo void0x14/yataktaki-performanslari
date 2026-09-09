@@ -18,6 +18,8 @@ def utc_now() -> str:
 
 
 class StateStore:
+    EVENT_MEMORY_LIMIT = 5000
+
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root).expanduser().resolve()
         self.agents_dir = self.root / "agents"
@@ -26,6 +28,7 @@ class StateStore:
         self._lock = threading.RLock()
         self._agents: dict[str, dict[str, Any]] = {}
         self._events: list[dict[str, Any]] = []
+        self._event_ids: set[str] = set()
         self._next_seq = 1
         self.root.mkdir(parents=True, exist_ok=True)
         self.agents_dir.mkdir(parents=True, exist_ok=True)
@@ -84,10 +87,23 @@ class StateStore:
                     seq = int(event.get("seq", 0) or 0)
                     if seq > 0:
                         self._events.append(event)
+                        event_id = str(event.get("event_id", "") or "")
+                        if event_id:
+                            self._event_ids.add(event_id)
                         self._next_seq = max(self._next_seq, seq + 1)
                 except (ValueError, TypeError, json.JSONDecodeError):
                     corruption = corruption or f"events line {line_number} is invalid"
         self._events.sort(key=lambda event: int(event.get("seq", 0) or 0))
+        # The full history stays on disk; memory keeps only the newest window so a
+        # multi-hundred-megabyte event log cannot pin the whole VDS in RSS.
+        if len(self._events) > self.EVENT_MEMORY_LIMIT:
+            kept = self._events[-self.EVENT_MEMORY_LIMIT:]
+            self._events = kept
+            self._event_ids = {
+                str(event.get("event_id", "") or "")
+                for event in kept
+                if str(event.get("event_id", "") or "")
+            }
         return corruption
 
     def _write_agents(self) -> None:
@@ -211,13 +227,22 @@ class StateStore:
             payload = dict(redact(event))
             payload["kind"] = "event"
             event_id = str(payload.get("event_id", "") or "")
-            if event_id:
+            if event_id and event_id in self._event_ids:
                 for existing in reversed(self._events):
                     if str(existing.get("event_id", "") or "") == event_id:
                         return dict(existing)
             payload["seq"] = self._next_seq
             self._next_seq += 1
             self._events.append(payload)
+            if event_id:
+                self._event_ids.add(event_id)
+            if len(self._events) > self.EVENT_MEMORY_LIMIT:
+                dropped = self._events[:-self.EVENT_MEMORY_LIMIT]
+                self._events = self._events[-self.EVENT_MEMORY_LIMIT:]
+                for old in dropped:
+                    old_id = str(old.get("event_id", "") or "")
+                    if old_id:
+                        self._event_ids.discard(old_id)
             with self.events_file.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
                 handle.flush()
@@ -365,13 +390,43 @@ class StateStore:
         return self.append_event(make_event(event_type, **fields))
 
     def events_after(self, seq: int = 0, agent_id: str | None = None) -> list[dict[str, Any]]:
+        threshold = int(seq)
         with self._lock:
-            return [
+            in_memory = [
                 dict(event)
                 for event in self._events
-                if int(event.get("seq", 0) or 0) > int(seq)
+                if int(event.get("seq", 0) or 0) > threshold
                 and (agent_id is None or event.get("agent_id") == agent_id)
             ]
+            oldest_in_memory = (
+                int(self._events[0].get("seq", 0) or 0) if self._events else None
+            )
+        # When the caller asks for history older than the in-memory window, replay
+        # it from the append-only log instead of pretending it no longer exists.
+        if oldest_in_memory is None or threshold + 1 >= oldest_in_memory:
+            return in_memory
+        from_disk: list[dict[str, Any]] = []
+        try:
+            with self.events_file.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    event_seq = int(event.get("seq", 0) or 0)
+                    if event_seq <= threshold or event_seq >= oldest_in_memory:
+                        continue
+                    if agent_id is not None and event.get("agent_id") != agent_id:
+                        continue
+                    from_disk.append(event)
+        except OSError:
+            return in_memory
+        from_disk.sort(key=lambda event: int(event.get("seq", 0) or 0))
+        return from_disk + in_memory
 
     def remove_agent(self, agent_id: str) -> dict[str, Any]:
         with self._lock:
