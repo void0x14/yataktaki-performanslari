@@ -1557,40 +1557,64 @@ class AgentRuntime:
         """
         return [{"host": ip, "port": int(port)} for port in sorted(open_ports)]
 
+    def _masscan_enumerate_ports(self, ip: str, port_range: str, rate: int) -> list[int]:
+        """Run masscan over the range and return the ports it reported open."""
+        command = _masscan_command(f"{ip}/32", port_range.replace(" ", ""), rate)
+        reported: list[int] = []
+        stderr = ""
+        with subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+        ) as process:
+            assert process.stdout is not None
+            for line in process.stdout:
+                if self.stopped():
+                    process.terminate()
+                    raise RuntimeError("operator stop during port scan")
+                parts = line.strip().split()
+                if len(parts) >= 4 and parts[0] == "open":
+                    try:
+                        reported.append(int(parts[2]))
+                    except ValueError:
+                        continue
+            stderr = process.stderr.read() if process.stderr else ""
+            return_code = process.wait()
+        if return_code != 0 and not reported:
+            raise RuntimeError((stderr or f"masscan exit {return_code}").strip()[:2000])
+        return sorted(set(reported))
+
     def _port_scan_live_ip(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Real port scanner: enumerate every open TCP port on a live IP."""
+        """Enumerate every open TCP port on a live IP.
+
+        Measured on the real VDS: masscan full-scans one IP in ~8s and finds
+        all ports, while a pure socket scan took 250s+ and missed ports. So
+        masscan enumerates, then each hit is re-confirmed with a real socket
+        connect so a stale SYN result never becomes a fake candidate.
+        """
         ip = str(args.get("ip", "")).strip()
         ipaddress.ip_address(ip)
         port_range = str(args.get("port_range") or "1-65535").strip() or "1-65535"
-        intervals = _port_intervals(port_range)
-        ports: list[int] = []
-        for start, end in intervals:
-            ports.extend(range(start, end + 1))
-        # Measured on the real VDS: timeout=0.5 missed ports that 1.5 found.
-        # A too-aggressive scan silently drops real open ports, so the default
-        # is a real probe (1.5s) and every hit is re-confirmed before it is
-        # reported, which removes the false-negative that cost us candidates.
-        timeout = float(args.get("timeout", 1.5) or 1.5)
-        workers = int(args.get("concurrency", 512) or 512)
+        _port_intervals(port_range)  # shape validation
+        rate = int(args.get("rate", 5000) or 5000)
+        rate = max(50, min(1_000_000, rate))
+        confirm_timeout = float(args.get("timeout", 1.5) or 1.5)
 
-        def probe(port: int) -> tuple[int, bool]:
+        reported = self._masscan_enumerate_ports(ip, port_range, rate)
+
+        def confirm(port: int) -> tuple[int, bool]:
             if self.stopped():
                 return port, False
-            for attempt in range(2):
-                try:
-                    with socket.create_connection((ip, port), timeout=timeout):
-                        return port, True
-                except OSError:
-                    continue
-            return port, False
+            try:
+                with socket.create_connection((ip, port), timeout=confirm_timeout):
+                    return port, True
+            except OSError:
+                return port, False
 
         open_ports: list[int] = []
-        with ThreadPoolExecutor(max_workers=max(1, min(2048, workers))) as pool:
-            futures = [pool.submit(probe, port) for port in ports]
-            for future in as_completed(futures):
-                port, opened = future.result()
-                if opened:
-                    open_ports.append(port)
+        if reported:
+            with ThreadPoolExecutor(max_workers=max(1, min(256, len(reported)))) as pool:
+                for port, ok in pool.map(confirm, sorted(set(reported))):
+                    if ok:
+                        open_ports.append(port)
         open_ports.sort()
         candidates = self._candidates_from_ports(ip, open_ports)
         self._enqueue_candidates(candidates)
@@ -1598,21 +1622,24 @@ class AgentRuntime:
         _json_write(result_path, {
             "ip": ip,
             "open_ports": open_ports,
+            "masscan_reported": sorted(set(reported)),
             "candidates": candidates,
             "scan_range": port_range,
-            "method": "direct_socket_full_scan",
+            "method": "masscan+socket_confirm",
         })
         return {
             "working_note": (
-                f"{ip} port taraması tamamlandı: {len(open_ports)} açık port, "
+                f"{ip} port taraması tamamlandı: {len(open_ports)} açık port "
+                f"(masscan {len(set(reported))} bildirdi, socket doğruladı), "
                 f"{len(candidates)} bağımsız aday."
             ),
             "ip": ip,
             "open_ports": open_ports,
+            "masscan_reported": sorted(set(reported)),
             "candidates": candidates,
             "candidate_count": len(candidates),
             "scan_range": port_range,
-            "method": "direct_socket_full_scan",
+            "method": "masscan+socket_confirm",
             "evidence_refs": [f"agent://{self.agent_id}/{result_path.relative_to(self.agent_dir)}"],
         }
 

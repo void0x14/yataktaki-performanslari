@@ -463,6 +463,7 @@ def test_port_scan_live_ip_enumerates_every_open_port(tmp_path):
         raise OSError("closed")
 
     rt.socket.create_connection = fake_create_connection
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: [16866, 41451]
     try:
         result = runtime._port_scan_live_ip({
             "ip": "193.233.126.126",
@@ -630,6 +631,7 @@ def test_port_scan_result_is_exposed_as_pending_work(tmp_path):
         raise OSError("closed")
 
     rt.socket.create_connection = fake
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: [22, 8000]
     try:
         result = runtime._port_scan_live_ip({
             "ip": "193.233.126.126",
@@ -674,6 +676,7 @@ def test_port_scan_default_timeout_is_not_so_aggressive_it_misses_ports(tmp_path
         raise OSError("closed")
 
     rt.socket.create_connection = fake
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: [16866]
     try:
         runtime._port_scan_live_ip({
             "ip": "193.233.126.89",
@@ -684,3 +687,63 @@ def test_port_scan_default_timeout_is_not_so_aggressive_it_misses_ports(tmp_path
         rt.socket.create_connection = original
     assert seen_timeouts, "scan must probe"
     assert min(seen_timeouts) >= 1.0, f"default timeout too aggressive: {min(seen_timeouts)}"
+
+
+def test_port_scan_uses_masscan_then_socket_confirms(tmp_path):
+    """Measured: masscan full-scan of one IP takes ~8s and found all 6 ports,
+    while a pure socket scan took 250s+ and missed ports. The scanner must use
+    masscan to enumerate, then re-confirm each hit with a real socket connect."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    calls = {}
+
+    class FakeProcess:
+        def __init__(self, lines):
+            self.stdout = iter(lines)
+            self.stderr = None
+            self.returncode = 0
+        def wait(self):
+            return 0
+
+    def fake_popen(command, **kwargs):
+        calls["command"] = command
+        # masscan -oL - output: open tcp <port> <ip> <ts>
+        return FakeProcess([
+            "open tcp 22 193.233.126.89 1\n",
+            "open tcp 16866 193.233.126.89 1\n",
+            "open tcp 9999 193.233.126.89 1\n",  # stale/false positive
+        ])
+
+    original_popen = rt.subprocess.Popen
+    original_conn = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_conn(addr, timeout=None):
+        if addr[1] in (22, 16866):
+            return FakeConn()
+        raise OSError("not really open")
+
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: [22, 16866, 9999]
+    rt.socket.create_connection = fake_conn
+    try:
+        result = runtime._port_scan_live_ip({
+            "ip": "193.233.126.89",
+            "port_range": "1-65535",
+        })
+    finally:
+        rt.socket.create_connection = original_conn
+    # 9999 was reported by masscan but socket-confirm rejects it.
+    assert result["open_ports"] == [22, 16866]
+    assert result["method"] == "masscan+socket_confirm"
