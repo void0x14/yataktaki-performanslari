@@ -534,3 +534,23 @@ def test_resource_plan_nested_tool_arguments_are_executed(tmp_path):
             "timeout": 0.5,
         })
     ]
+
+
+def test_operator_declared_live_ips_are_usable_for_port_scan(tmp_path):
+    """Operator states the masscan live-IP list; the hunter must be able to run
+    the full port scan on them without re-running masscan from scratch."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.operator_directives.append({
+        "instruction": "masscan canli IP ler: 193.233.126.126, 193.233.126.179. port_scan_live_ip yap.",
+    })
+    assert runtime._target_provenance_error(
+        "port_scan_live_ip", {"ip": "193.233.126.126"}
+    ) is None

@@ -1147,6 +1147,11 @@ class AgentRuntime:
                 add_asn(value)
             for value in _PUBLIC_IPV4_RE.findall(text):
                 add_ip(value, "source_ips")
+            # An operator-stated masscan live list is real L4 evidence for the
+            # current run; port scanning those IPs must not require a re-scan.
+            if re.search(r"(?i)(canli|live|masscan)", text):
+                for value in _PUBLIC_IPV4_RE.findall(text):
+                    add_ip(value, "live_ips")
 
         for observation in self.observations:
             tool = observation.get("tool")
