@@ -127,30 +127,61 @@ class Supervisor:
             self._install_adopted_workers(self._handover_session.adopted)
 
     def _recover_persisted_processes(self) -> None:
+        """Bring persisted agents back to life after an agentd restart.
+
+        Previously every persisted running agent was parked in "unknown" and
+        never restarted, so the hunt silently stopped on every deploy. Recovery
+        now re-launches the worker; if the relaunch fails the agent is parked in
+        "unknown" with the real error instead of pretending to be healthy.
+        """
         for agent in self.store.list_agents(include_hidden=True):
             if agent.get("state") not in {"running", "paused"}:
                 continue
+            agent_id = agent["agent_id"]
             pid = agent.get("pid")
             process_group = agent.get("process_group")
-            if not pid:
-                continue
-            self.store.update_agent(
-                agent["agent_id"],
-                state="unknown",
-                working_note="Supervisor yeniden başladı; eski PID otomatik sahiplenilmedi.",
-                next_action="operator inspect",
-            )
             self.store.record_event(
-                "recovery_required",
-                agent_id=agent["agent_id"],
+                "recovery_started",
+                agent_id=agent_id,
                 job_id=agent.get("job_id", ""),
                 pid=pid,
                 process_group=process_group,
-                state="unknown",
+                state="recovering",
                 tool="supervisor_recovery",
                 target="vds://process",
-                working_note="Kalıcı kayıt var fakat yeni supervisor eski prosesi otomatik yeniden başlatmıyor.",
-                next_action="operator inspect",
+                working_note="Kalıcı ajan yeniden başlatılıyor; av kesintisiz devam edecek.",
+                next_action="worker restart",
+            )
+            try:
+                self._start(agent_id)
+            except Exception as exc:  # noqa: BLE001 - recovery must report, not crash
+                self.store.update_agent(
+                    agent_id,
+                    state="unknown",
+                    working_note=f"Kalıcı ajan yeniden başlatılamadı: {type(exc).__name__}: {exc}",
+                    next_action="operator inspect",
+                )
+                self.store.record_event(
+                    "recovery_failed",
+                    agent_id=agent_id,
+                    job_id=agent.get("job_id", ""),
+                    state="unknown",
+                    tool="supervisor_recovery",
+                    target="vds://process",
+                    working_note="Kalıcı ajan geri getirilemedi; gerçek hata kayda geçti.",
+                    error=f"{type(exc).__name__}: {exc}",
+                    next_action="operator inspect",
+                )
+                continue
+            self.store.record_event(
+                "recovery_completed",
+                agent_id=agent_id,
+                job_id=agent.get("job_id", ""),
+                state="running",
+                tool="supervisor_recovery",
+                target="vds://process",
+                working_note="Kalıcı ajan yeniden başlatıldı; av kaldığı yerden devam ediyor.",
+                next_action="hunt continues",
             )
 
     def _repo_root(self) -> Path:
@@ -987,7 +1018,31 @@ class Supervisor:
         self._handles.pop(handle.agent_id, None)
         if handle.hard_kill_requested or agent.get("state") == "killed":
             return
-        state = "completed" if return_code == 0 else "failed"
+        published = agent.get("published_proxies") or []
+        has_egress = any(
+            isinstance(v, dict) and any(
+                isinstance(r, dict) and r.get("egress_confirmed")
+                for r in (v.get("results") or [])
+            )
+            for v in (agent.get("validations") or [])
+        )
+        delivered = bool(published) or has_egress
+        if return_code == 0:
+            state, error, next_action, note = "completed", None, "none", f"Worker prosesi çıktı: code=0."
+        elif delivered:
+            state, error, next_action, note = (
+                "completed",
+                f"exit code {return_code} (çıktı teslim edildiği için completed)",
+                "none",
+                f"Worker prosesi çıktı: code={return_code}; doğrulanmış çıktı mevcut, completed sayıldı.",
+            )
+        else:
+            state, error, next_action, note = (
+                "failed",
+                f"exit code {return_code}",
+                "operator inspect",
+                f"Worker prosesi çıktı: code={return_code}.",
+            )
         await self._record(
             "agent_exited",
             agent_id=handle.agent_id,
@@ -997,9 +1052,9 @@ class Supervisor:
             state=state,
             tool="process_runtime",
             target="vds://worker",
-            working_note=f"Worker prosesi çıktı: code={return_code}.",
-            next_action="operator inspect" if state == "failed" else "none",
-            error=None if return_code == 0 else f"exit code {return_code}",
+            working_note=note,
+            next_action=next_action,
+            error=error,
         )
 
     async def _signal_group(self, handle: WorkerHandle, sig: signal.Signals) -> None:

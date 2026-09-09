@@ -964,3 +964,34 @@ def test_notebook_ports_are_tried_before_legacy_ports(tmp_path):
     # script-kiddie legacy ports must come after the operator's product ports
     assert priority.index(12323) < priority.index(3128) if 3128 in priority else True
     assert priority.index(8000) < priority.index(1080) if 1080 in priority else True
+
+
+def test_recovery_restarts_persisted_running_agent(tmp_path):
+    """Regression: after an agentd restart every persisted running agent became
+    'unknown' and stayed dead until the operator manually created a new one.
+    Recovery must re-launch the worker and return it to running."""
+    import services.agentd.supervisor as sup
+    from services.agentd.state import StateStore
+
+    root = tmp_path / "agentd"
+    store = StateStore(root)
+    agent = store.create_agent("gezinme", "kalici", None, "devam et")
+    store.update_agent(agent["agent_id"], state="running", pid=12345, process_group=12345)
+
+    supervisor = sup.Supervisor.__new__(sup.Supervisor)
+    supervisor.root = root
+    supervisor.store = store
+    supervisor._handles = {}
+    restarted: list[str] = []
+
+    def fake_start(agent_id: str) -> dict:
+        restarted.append(agent_id)
+        return {"agent_id": agent_id, "pid": 999}
+
+    supervisor._start = fake_start
+    supervisor._recover_persisted_processes()
+
+    refreshed = store.get_agent(agent["agent_id"])
+    assert restarted == [agent["agent_id"]], "persisted running agent must be restarted"
+    assert refreshed["state"] in {"running", "created"}, refreshed["state"]
+    assert refreshed["state"] != "unknown"
