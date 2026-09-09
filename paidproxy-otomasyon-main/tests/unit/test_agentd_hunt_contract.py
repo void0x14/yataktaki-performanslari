@@ -494,3 +494,43 @@ def test_open_ports_become_independent_candidates(tmp_path):
         {"host": "193.233.126.126", "port": 16866},
         {"host": "193.233.126.126", "port": 41451},
     ]
+
+
+def test_resource_plan_nested_tool_arguments_are_executed(tmp_path):
+    """Regression: the planner emits resource_plan.tool + nested tool_arguments
+    without requested_tools; the new port_scan tool must still run."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.observations.append({
+        "tool": "masscan_liveness",
+        "result": {"discovered": [{"ip": "193.233.126.126", "port": 8000}]},
+    })
+    tools = runtime._requested_tools({
+        "action": "full_scan",
+        "resource_plan": {
+            "tool": "port_scan_live_ip",
+            "tool_arguments": {
+                "port_scan_live_ip": {
+                    "ip": "193.233.126.126",
+                    "port_range": "1-65535",
+                    "concurrency": 1024,
+                    "timeout": 0.5,
+                }
+            },
+        },
+    })
+    assert tools == [
+        ("port_scan_live_ip", {
+            "ip": "193.233.126.126",
+            "port_range": "1-65535",
+            "concurrency": 1024,
+            "timeout": 0.5,
+        })
+    ]

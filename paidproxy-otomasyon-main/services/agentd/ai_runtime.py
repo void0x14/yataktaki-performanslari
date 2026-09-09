@@ -937,6 +937,19 @@ class AgentRuntime:
                 {"name": name, "tool_arguments": arguments}
                 for name, arguments in self._flat_tool_arguments(decision)
             ]
+        if not names:
+            # Shape seen in the wild: resource_plan.tool + nested
+            # resource_plan.tool_arguments{name: args} without requested_tools.
+            plan = decision.get("resource_plan")
+            if isinstance(plan, dict):
+                single = str(plan.get("tool") or plan.get("name") or "").strip()
+                nested = plan.get("tool_arguments")
+                if single and isinstance(nested, dict):
+                    inner = nested.get(single)
+                    if isinstance(inner, dict):
+                        names = [{"name": single, "tool_arguments": dict(inner)}]
+                    else:
+                        names = [{"name": single, "tool_arguments": dict(nested)}]
         resource_plan = decision.get("resource_plan") or {}
         args_by_tool = resource_plan.get("tool_arguments", {}) if isinstance(resource_plan, dict) else {}
         if not isinstance(args_by_tool, dict):
