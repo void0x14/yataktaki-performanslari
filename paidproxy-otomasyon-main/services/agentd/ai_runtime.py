@@ -1592,8 +1592,13 @@ class AgentRuntime:
         """
         ip = str(args.get("ip", "")).strip()
         ipaddress.ip_address(ip)
-        port_range = str(args.get("port_range") or "1-65535").strip() or "1-65535"
-        _port_intervals(port_range)  # shape validation
+        # This tool's contract is a FULL scan: "live IP -> every open port".
+        # Measured on the real VDS, a planner-supplied narrow range (the vendor
+        # port list) silently dropped 22/80/443/5432/16866. Keep the operator's
+        # request for the record but always scan the whole space.
+        requested_range = str(args.get("port_range") or "1-65535").strip() or "1-65535"
+        _port_intervals(requested_range)  # shape validation
+        port_range = "1-65535"
         rate = int(args.get("rate", 5000) or 5000)
         rate = max(50, min(1_000_000, rate))
         confirm_timeout = float(args.get("timeout", 1.5) or 1.5)
@@ -1625,6 +1630,7 @@ class AgentRuntime:
             "masscan_reported": sorted(set(reported)),
             "candidates": candidates,
             "scan_range": port_range,
+            "requested_range": requested_range,
             "method": "masscan+socket_confirm",
         })
         return {
@@ -1639,6 +1645,7 @@ class AgentRuntime:
             "candidates": candidates,
             "candidate_count": len(candidates),
             "scan_range": port_range,
+            "requested_range": requested_range,
             "method": "masscan+socket_confirm",
             "evidence_refs": [f"agent://{self.agent_id}/{result_path.relative_to(self.agent_dir)}"],
         }

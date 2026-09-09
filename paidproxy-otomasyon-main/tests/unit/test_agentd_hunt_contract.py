@@ -747,3 +747,50 @@ def test_port_scan_uses_masscan_then_socket_confirms(tmp_path):
     # 9999 was reported by masscan but socket-confirm rejects it.
     assert result["open_ports"] == [22, 16866]
     assert result["method"] == "masscan+socket_confirm"
+
+
+def test_port_scan_rejects_silent_range_narrowing_when_full_scan_requested(tmp_path):
+    """Regression: the planner passed the vendor port list as port_range and
+    silently reduced a full scan to 9 ports, losing 22/80/443/5432/16866.
+    A full-scan request must not be narrowed by the notebook ports."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    seen = {}
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: seen.setdefault("rng", rng) or []
+    result = runtime._port_scan_live_ip({
+        "ip": "193.233.126.126",
+        "port_range": "8000-8001,10000-10001,12323-12324,3129,1081,7777,7000,823,6060",
+    })
+    # This tool's contract is a FULL port scan; a narrowed range from the
+    # planner must not silently drop ports, so the effective range is 1-65535.
+    assert seen["rng"] == "1-65535"
+    assert result["scan_range"] == "1-65535"
+    assert result["requested_range"] != "1-65535"
+
+
+def test_port_scan_full_range_is_used_when_requested(tmp_path):
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    seen = {}
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: seen.setdefault("rng", rng) or []
+    result = runtime._port_scan_live_ip({"ip": "193.233.126.126", "port_range": "1-65535"})
+    assert seen["rng"] == "1-65535"
+    assert result["scan_range"] == "1-65535"
