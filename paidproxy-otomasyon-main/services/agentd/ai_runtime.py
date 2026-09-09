@@ -36,6 +36,7 @@ CONTROLLED_TOOLS = {
     "inspect_owner_context",
     "list_owner_ranges",
     "masscan_liveness",
+    "port_scan_live_ip",
     "expand_live_ip",
     "validate_proxy",
     "publish_proxy",
@@ -148,6 +149,10 @@ ARGUMENT_CONTRACTS: dict[str, dict[str, Any]] = {
     "masscan_liveness": {
         "required": ["cidr", "one first port in ports OR port_spec/port_range"],
         "optional": ["rate"],
+    },
+    "port_scan_live_ip": {
+        "required": ["ip"],
+        "optional": ["port_range", "timeout", "concurrency"],
     },
     "expand_live_ip": {
         "required": ["ip", "ports OR port_spec/port_range"],
@@ -304,7 +309,10 @@ def _hunter_instruction(observations: list[dict[str, Any]]) -> str:
             "kaynak gövdesindeki gözlenmiş IP/org/ASN sinyalinden inspect_owner_context "
             "veya list_owner_ranges seç, sonra yalnız gerekçeli tek ilk dişe geç. "
             "Genel DNS/bootstrap hedeflerini başlangıç kokusu sayma; "
-            "masscan discovered boşsa expand_live_ip seçme."
+            "masscan discovered boşsa port_scan_live_ip seçme. "
+            "ÖNEMLİ: masscan canlı IP verdiyse o IP'yi ATMA. port_scan_live_ip ile "
+            "TÜM açık portlarını tara; her açık port ayrı vekil adayıdır. Bir portun "
+            "proxy vermemesi IP'yi öldürmez; diğer portları ayrı ayrı doğrula."
         )
     if runtime_seen:
         return (
@@ -476,6 +484,27 @@ def validate_tool_arguments(name: str, arguments: Any) -> dict[str, Any]:
         if not 1 <= asn <= 4294967295:
             raise ValueError("list_owner_ranges.asn aralık dışında")
         result["asn"] = asn
+        return result
+
+    if name == "port_scan_live_ip":
+        raw_ip = str(arguments.get("ip") or "").strip()
+        if not raw_ip:
+            raise ValueError("port_scan_live_ip.ip gerekli")
+        result["ip"] = str(ipaddress.ip_address(raw_ip))
+        port_range = str(arguments.get("port_range") or "1-65535").strip() or "1-65535"
+        intervals = _port_intervals(port_range)
+        if not intervals:
+            raise ValueError("port_scan_live_ip.port_range boş olamaz")
+        result["port_range"] = port_range
+        for field, low, high in (("timeout", 0.05, 10.0), ("concurrency", 1, 2048)):
+            if arguments.get(field) is not None:
+                try:
+                    value = float(arguments[field]) if field == "timeout" else int(arguments[field])
+                except (TypeError, ValueError):
+                    raise ValueError(f"port_scan_live_ip.{field} sayısal olmalı") from None
+                if not low <= value <= high:
+                    raise ValueError(f"port_scan_live_ip.{field} {low}..{high} arasında olmalı")
+                result[field] = value
         return result
 
     if name in {"masscan_liveness", "expand_live_ip"}:
@@ -675,6 +704,12 @@ class AgentRuntime:
             ("network", "l4", "masscan"),
         )
         self.catalog.register(
+            "port_scan_live_ip",
+            "Canlı IP'de TÜM açık portları tarar (gerçek port scanner); her açık port ayrı aday olur.",
+            self._port_scan_live_ip,
+            ("network", "socket", "portscan"),
+        )
+        self.catalog.register(
             "expand_live_ip",
             "Masscan sonrası tek canlı IP'nin seçilmiş portlarını doğrudan socket ile dikey genişletir; Masscan çağırmaz.",
             self._expand_live_ip,
@@ -807,7 +842,11 @@ class AgentRuntime:
                 "Kontratı karşılayamıyorsan aracı isteme. Kanıt ve karşı kanıtı ayır. "
                 "L4 canlılık ile L7 gerçek-site "
                 "çıkışını karıştırma. Masscan yalnız ilk canlılık içindir; canlı IP'de "
-                "dikey genişleme için expand_live_ip socket aracını seç. Sabit skor üretme. "
+                "dikey genişleme için expand_live_ip socket aracını seç. "
+                "Masscan bir canlı IP verdiyse port_scan_live_ip ile o IP'nin TÜM "
+                "açık portlarını çıkar; her açık port bağımsız adaydır ve tek tek "
+                "validate_proxy edilir. Bir port ölü diye IP'yi bırakma. "
+                "Sabit skor üretme. "
                 "Gerçek bir HTTP(S) hedefini target_url alanında kendin seçmeden L7 doğrulama "
                 "isteme. validate_proxy için protocols alanında hangi protokolleri deneyeceğini "
                 "açıkça seç; protokol listesi eksikse araç çağrısı yapma. publish_proxy için "
@@ -1146,6 +1185,9 @@ class AgentRuntime:
                 network.subnet_of(parent) for parent in facts["cidrs"]
             ):
                 return "CIDR public-source/owner/kardeş aralığı kanıtından türemiyor"
+        elif name == "port_scan_live_ip":
+            if str(arguments.get("ip")) not in facts["live_ips"]:
+                return "port taraması için gerçek L4 canlı IP kanıtı yok"
         elif name == "expand_live_ip":
             if str(arguments.get("ip")) not in facts["live_ips"]:
                 return "dikey genişleme için gerçek L4 canlı IP kanıtı yok"
@@ -1438,6 +1480,67 @@ class AgentRuntime:
             "discovered": discovered,
             "evidence_refs": [f"agent://{self.agent_id}/{output_path.relative_to(self.agent_dir)}"],
             "next_action": "AI canlı IP seçip socket dikey genişleme veya L7 doğrulama kararı verecek",
+        }
+
+    @staticmethod
+    def _candidates_from_ports(ip: str, open_ports: list[int]) -> list[dict[str, Any]]:
+        """Every open port on a live IP is an independent proxy candidate.
+
+        One dead port never discards the host; the operator's flow is
+        live IP -> all open ports -> candidate per port -> check each.
+        """
+        return [{"host": ip, "port": int(port)} for port in sorted(open_ports)]
+
+    def _port_scan_live_ip(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Real port scanner: enumerate every open TCP port on a live IP."""
+        ip = str(args.get("ip", "")).strip()
+        ipaddress.ip_address(ip)
+        port_range = str(args.get("port_range") or "1-65535").strip() or "1-65535"
+        intervals = _port_intervals(port_range)
+        ports: list[int] = []
+        for start, end in intervals:
+            ports.extend(range(start, end + 1))
+        timeout = float(args.get("timeout", 0.6) or 0.6)
+        workers = int(args.get("concurrency", 512) or 512)
+
+        def probe(port: int) -> tuple[int, bool]:
+            if self.stopped():
+                return port, False
+            try:
+                with socket.create_connection((ip, port), timeout=timeout):
+                    return port, True
+            except OSError:
+                return port, False
+
+        open_ports: list[int] = []
+        with ThreadPoolExecutor(max_workers=max(1, min(2048, workers))) as pool:
+            futures = [pool.submit(probe, port) for port in ports]
+            for future in as_completed(futures):
+                port, opened = future.result()
+                if opened:
+                    open_ports.append(port)
+        open_ports.sort()
+        candidates = self._candidates_from_ports(ip, open_ports)
+        result_path = self.output_dir / f"portscan-{self.step:05d}.json"
+        _json_write(result_path, {
+            "ip": ip,
+            "open_ports": open_ports,
+            "candidates": candidates,
+            "scan_range": port_range,
+            "method": "direct_socket_full_scan",
+        })
+        return {
+            "working_note": (
+                f"{ip} port taraması tamamlandı: {len(open_ports)} açık port, "
+                f"{len(candidates)} bağımsız aday."
+            ),
+            "ip": ip,
+            "open_ports": open_ports,
+            "candidates": candidates,
+            "candidate_count": len(candidates),
+            "scan_range": port_range,
+            "method": "direct_socket_full_scan",
+            "evidence_refs": [f"agent://{self.agent_id}/{result_path.relative_to(self.agent_dir)}"],
         }
 
     def _expand_live_ip(self, args: dict[str, Any]) -> dict[str, Any]:

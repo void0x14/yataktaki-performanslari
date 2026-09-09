@@ -433,3 +433,64 @@ def test_proxy_get_does_not_accept_origin_server_page_as_egress(monkeypatch):
     )
     ok = runtime._proxy_get(real, target)
     assert ok["egress_confirmed"] is True
+
+
+def test_port_scan_live_ip_enumerates_every_open_port(tmp_path):
+    """Operator's core flow: masscan gives a live IP, then a real port scanner
+    enumerates ALL its open ports. Every open port becomes a candidate; one
+    dead port must never discard the whole IP."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    # Simulate a host where 3128 is closed but a random high port is open.
+    import services.agentd.ai_runtime as rt
+    original = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_create_connection(addr, timeout=None):
+        host, port = addr
+        if port in (16866, 41451):
+            return FakeConn()
+        raise OSError("closed")
+
+    rt.socket.create_connection = fake_create_connection
+    try:
+        result = runtime._port_scan_live_ip({
+            "ip": "193.233.126.126",
+            "port_range": "1-65535",
+            "concurrency": 1024,
+            "timeout": 0.05,
+        })
+    finally:
+        rt.socket.create_connection = original
+    assert result["ip"] == "193.233.126.126"
+    assert result["open_ports"] == [16866, 41451]
+    assert result["scan_range"] == "1-65535"
+    assert result["candidate_count"] == 2
+
+
+def test_open_ports_become_independent_candidates(tmp_path):
+    """Each open port is checked separately; the IP survives per-port failures."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    candidates = runtime._candidates_from_ports("193.233.126.126", [16866, 41451])
+    assert candidates == [
+        {"host": "193.233.126.126", "port": 16866},
+        {"host": "193.233.126.126", "port": 41451},
+    ]
