@@ -933,3 +933,13 @@ def test_web_server_400_is_not_flagged_as_proxy(tmp_path):
         rt.socket.create_connection = original
     assert result["proxy_detected"] is False
     assert result["auth_required"] is False
+
+
+def test_hunter_instruction_names_operator_product_ports(tmp_path):
+    """The notebook must reach the model in prose, not only as snapshot JSON:
+    the live agent kept retrying 3128/1080 and never used the vendor ports."""
+    from services.agentd.ai_runtime import _hunter_instruction
+
+    instruction = _hunter_instruction([])
+    assert "8000" in instruction or "12323" in instruction or "10000" in instruction
+    assert "urun" in instruction.lower() or "ürün" in instruction.lower()

@@ -294,8 +294,26 @@ def _public_source_facts(body: str) -> dict[str, list[Any]]:
     }
 
 
+def _hunt_notebook_hint() -> str:
+    """Operator hunt notebook as prose, so the model actually uses the scent."""
+    notebook = _read_hunt_notebook()
+    ports = notebook.get("ports") or []
+    bands = notebook.get("bands") or []
+    if not ports and not bands:
+        return ""
+    port_text = ", ".join(str(port) for port in ports)
+    band_text = ", ".join(str(band) for band in bands)
+    return (
+        f" Operatör av defteri: ürün-spesifik vekil portları [{port_text}]"
+        + (f", sticky bantları [{band_text}]" if band_text else "")
+        + ". 3128 tek başına script-kiddie mezarlığıdır; ilk diş seçerken bu ürün "
+        "portlarını öncele ve canlı IP çıkınca port_scan_live_ip ile TÜM portlarını çıkar."
+    )
+
+
 def _hunter_instruction(observations: list[dict[str, Any]]) -> str:
     """Keep the AI moving from runtime preflight into real public-source hunting."""
+    notebook_hint = _hunt_notebook_hint()
     runtime_seen = any(item.get("tool") == "observe_vds_surface" for item in observations)
     source_seen = any(
         item.get("tool") == "browse_public_source"
@@ -304,7 +322,7 @@ def _hunter_instruction(observations: list[dict[str, Any]]) -> str:
         for item in observations
     )
     if source_seen:
-        return (
+        return (notebook_hint + 
             "Public av kaynağı kanıtı artık mevcut. observe_vds_surface tekrar seçme; "
             "kaynak gövdesindeki gözlenmiş IP/org/ASN sinyalinden inspect_owner_context "
             "veya list_owner_ranges seç, sonra yalnız gerekçeli tek ilk dişe geç. "
@@ -315,14 +333,17 @@ def _hunter_instruction(observations: list[dict[str, Any]]) -> str:
             "proxy vermemesi IP'yi öldürmez; diğer portları ayrı ayrı doğrula."
         )
     if runtime_seen:
-        return (
+        return (notebook_hint + 
             "VDS runtime yüzeyi zaten gözlendi; observe_vds_surface tekrar seçme. "
             "Şimdi browse_public_source ile yalnız av hostlarından birini seç: "
             "bgp.he.net, stat.ripe.net, rdap.* veya myip.ms. "
             "Genel web araması, örnek sayfalar veya DNS/bootstrap hedefleri kullanma; "
             "kaynak kanıtı olmadan CIDR/ASN/port uydurma."
         )
-    return "İlk turda runtime yüzeyini en fazla bir kez gözle; sonra public-source koku araştırmasına geç."
+    return (
+        notebook_hint
+        + " İlk turda runtime yüzeyini en fazla bir kez gözle; sonra public-source koku araştırmasına geç."
+    )
 
 
 def _allowed_port_bands() -> list[str]:
