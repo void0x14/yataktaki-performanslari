@@ -27,3 +27,11 @@ BAND 10001-63000
 ## Sınıflandırma
 # rotate: port değişir, kimlik sabit kalır
 # sticky: port aralığından IP başına sabit port atanır
+
+## Blok notu (2026-09-09, ASN 209207 Digital Hosting)
+# 13 kardes /24, 8 urun portu tarandi: 88 acik uc.
+# Sonuc: 83 web sunucusu (400/404), 4 olu, 1 auth'lu proxy (138.124.79.160:10000 -> 407).
+# Acik/satilabilir proxy: 0. Bu blok web hosting agirlikli; port bilgisi dogru
+# calisti (10000'de gercek proxy cikti) ama bu blokta acik vekil yok.
+# Ders: 407 = gercek proxy (auth'lu, satilamaz). 400/404 = servis portu.
+# Ayni blokta israr etme; ASN degistir veya residential kokuya gec.
