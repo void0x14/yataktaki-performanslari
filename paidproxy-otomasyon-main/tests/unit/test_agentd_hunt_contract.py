@@ -52,6 +52,13 @@ def test_recon_bgp_tool_argument_validation():
     res_ip = validate_tool_arguments("recon_bgp", {"ip": "138.124.79.1"})
     assert res_ip["ip"] == "138.124.79.1"
 
+
+def test_query_ledger_tool_argument_validation():
+    """query_ledger accepts optional cidr and port."""
+    res = validate_tool_arguments("query_ledger", {"cidr": "1.2.3.0/24", "port": 3128})
+    assert res["cidr"] == "1.2.3.0/24"
+    assert res["port"] == 3128
+
     with pytest.raises(ValueError, match="publicly routable IPv4"):
         validate_tool_arguments(
             "masscan_liveness",

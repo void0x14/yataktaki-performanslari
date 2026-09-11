@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 from proxy_pipeline.tarama_plani import bant_listesi
 from services.agentd.fast_triage import FastTriageEngine, run_fast_triage
 from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
+from services.agentd.scanned_ledger import ScannedLedger
 
 
 _CLAUDE_PLANNER_TIMEOUT = 240
@@ -174,6 +175,7 @@ CONTROLLED_TOOLS = {
     "publish_proxy",
     "fast_triage",
     "recon_bgp",
+    "query_ledger",
 }
 
 
@@ -340,6 +342,9 @@ ARGUMENT_CONTRACTS: dict[str, dict[str, Any]] = {
     "recon_bgp": {
         "required": ["asn OR ip"],
         "optional": ["org"],
+    },
+    "query_ledger": {
+        "optional": ["cidr", "port"],
     },
 }
 
@@ -801,6 +806,16 @@ def validate_tool_arguments(name: str, arguments: Any) -> dict[str, Any]:
             result["org"] = str(arguments["org"]).strip()
         return result
 
+    if name == "query_ledger":
+        if "cidr" in arguments:
+            result["cidr"] = str(arguments["cidr"]).strip()
+        if "port" in arguments:
+            try:
+                result["port"] = int(arguments["port"])
+            except (TypeError, ValueError):
+                pass
+        return result
+
     raise ValueError(f"tool not registered: {name}")
 
 
@@ -879,6 +894,7 @@ class AgentRuntime:
         self.agent_dir = self.root / "agents" / agent_id
         self.output_dir = self.agent_dir / "outputs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.ledger = ScannedLedger(self.root / "scanned_ledger.json")
         self.catalog = ToolCatalog()
         self.observations: list[dict[str, Any]] = []
         self.last_decision: dict[str, Any] = {}
@@ -968,6 +984,12 @@ class AgentRuntime:
             "Hedef ASN veya IP'nin anons ettiği tüm BGP prefix'lerini çeker, hedefi sınıflandırır ve pilot dilim önerir.",
             self._recon_bgp_tool,
             ("recon", "bgp", "intel"),
+        )
+        self.catalog.register(
+            "query_ledger",
+            "Daha önce taranmış CIDR ve port geçmişini, istatistikleri ve yinelenen taramaları önleme defterini sorgular.",
+            self._query_ledger_tool,
+            ("read_only", "ledger", "accounting"),
         )
 
     @staticmethod
@@ -1528,6 +1550,7 @@ class AgentRuntime:
             "priority_hunt_ports": self._priority_hunt_ports(),
             "recent_outcomes": self._outcome_records[-12:],
             "durable_evidence": self._evidence_summary(),
+            "scanned_ledger_stats": self.ledger.get_stats(),
             "previous_decision": {
                 "action": self.last_decision.get("action"),
                 "expected_value": self.last_decision.get("expected_value"),
@@ -2427,6 +2450,25 @@ class AgentRuntime:
             return_code = process.wait()
         if return_code != 0:
             raise RuntimeError((stderr or f"masscan exit {return_code}").strip()[:2000])
+        try:
+            target_ports = [int(p) for p in port_argument.split(",") if p.strip().isdigit()]
+            if not target_ports and "-" in port_argument:
+                first_part = port_argument.split("-")[0].strip()
+                if first_part.isdigit():
+                    target_ports = [int(first_part)]
+            if not target_ports:
+                target_ports = [0]
+            known_asns = [str(a) for a in self._fact_store.get("asn", set())]
+            target_asn = known_asns[0] if known_asns else "UNKNOWN"
+            self.ledger.record_scan(
+                asn=target_asn,
+                cidr=cidr,
+                ports=target_ports,
+                agent_id=self.agent_id,
+                found_open_count=len(discovered),
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to record masscan in ledger: {exc}")
         return {
             "working_note": f"L4 canlılık tamamlandı: {len(discovered)} açık uç; L7 henüz yapılmadı.",
             "cidr": cidr,
@@ -2917,6 +2959,20 @@ class AgentRuntime:
         for res in summary.get("all_results", []):
             self._mark_port_validated({"host": host, "port": int(res["port"])})
         live_proxies = summary.get("live_proxies", [])
+        if live_proxies:
+            try:
+                known_asns = [str(a) for a in self._fact_store.get("asn", set())]
+                target_asn = known_asns[0] if known_asns else "UNKNOWN"
+                self.ledger.record_scan(
+                    asn=target_asn,
+                    cidr=f"{host}/32",
+                    ports=ports,
+                    agent_id=self.agent_id,
+                    found_open_count=len(ports),
+                    live_proxies_count=len(live_proxies),
+                )
+            except Exception as exc:
+                logger.warning(f"Ledger record failed in fast_triage: {exc}")
         return {
             "working_note": f"{host} için {len(ports)} port asenkron olarak tarandı: {len(live_proxies)} çalışan proxy doğrulandı.",
             "host": host,
@@ -2937,6 +2993,19 @@ class AgentRuntime:
         return {
             "working_note": f"{asn} için BGP ve hedef istihbarat planı hazırlandı. Pilot dilim: {plan.get('pilot_prefix')}.",
             "recon_plan": plan,
+        }
+
+    def _query_ledger_tool(self, args: dict[str, Any]) -> dict[str, Any]:
+        cidr = str(args.get("cidr") or "").strip()
+        port = int(args.get("port") or 0)
+        is_scanned = self.ledger.is_scanned(cidr, port) if (cidr and port) else False
+        stats = self.ledger.get_stats()
+        return {
+            "working_note": f"Defter istatistikleri: {stats['total_scans']} kayıt, {stats['total_live_proxies_found']} canlı vekil.",
+            "stats": stats,
+            "checked_cidr": cidr,
+            "checked_port": port,
+            "is_already_scanned": is_scanned,
         }
 
     def _resolve_agent_ref(self, reference: str) -> Path:
