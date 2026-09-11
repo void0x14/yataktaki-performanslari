@@ -6,6 +6,7 @@ satırları yazar (Tauri `show_base` event'i olarak yayınlanır).
 """
 from __future__ import annotations
 
+from collections import deque
 import base64
 import json
 from pathlib import Path
@@ -30,11 +31,12 @@ LAST_FRAME_H = 0
 FRAME_SEQ = 0
 FRAME_SIZE = (0, 0)
 LIVE_MAX_FPS = 12
+FRAME_TIMES: deque[float] = deque(maxlen=24)
 
 
-def emit(state: str, detail: str, image: bytes = b"", width: int = 0, height: int = 0, seq: int = 0) -> None:
+def emit(state: str, detail: str, image: bytes = b"", width: int = 0, height: int = 0, seq: int = 0, fps: float = 0.0) -> None:
     """Tek JSON satırı olarak stdout'a yazar; lib.rs bunu `show_base` event'ine çevirir."""
-    payload: dict[str, object] = {"state": state, "detail": detail, "width": width, "height": height, "seq": seq}
+    payload: dict[str, object] = {"state": state, "detail": detail, "width": width, "height": height, "seq": seq, "fps": round(fps, 1), "ts": time.time()}
     if image:
         payload["image"] = base64.b64encode(image).decode("ascii")
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -64,7 +66,7 @@ def frame_png() -> bytes:
         from PIL import Image
 
         buffer = io.BytesIO()
-        Image.frombytes("RGBX", (w, h), frame).save(buffer, format="PNG", optimize=False)
+        Image.frombytes("RGBX", (w, h), frame).convert("RGB").save(buffer, format="PNG", optimize=False)
         return buffer.getvalue()
     except ImportError:
         return frame
@@ -136,6 +138,25 @@ def read_update(sock: socket.socket, framebuffer: bytearray, width: int, height:
             framebuffer[target:target + w * 4] = raw[source:source + w * 4]
 
 
+def current_fps() -> float:
+    now = time.monotonic()
+    FRAME_TIMES.append(now)
+    if len(FRAME_TIMES) < 2:
+        return 0.0
+    span = FRAME_TIMES[-1] - FRAME_TIMES[0]
+    return (len(FRAME_TIMES) - 1) / span if span > 0 else 0.0
+
+
+def emit_last_frame(reason: str) -> None:
+    """Yeni RFB oturumu kurulana kadar son bilinen kareyi UI'a göster."""
+    with FRAME_LOCK:
+        frame = LAST_FRAME
+        w, h = LAST_FRAME_W, LAST_FRAME_H
+        seq = FRAME_SEQ
+    if frame and w and h:
+        emit("STALE", reason, frame_png(), w, h, seq)
+
+
 def publish_frame(framebuffer: bytearray, width: int, height: int) -> None:
     global LAST_FRAME, LAST_FRAME_W, LAST_FRAME_H, FRAME_SEQ
     with FRAME_LOCK:
@@ -144,7 +165,7 @@ def publish_frame(framebuffer: bytearray, width: int, height: int) -> None:
         LAST_FRAME_H = height
         FRAME_SEQ += 1
         seq = FRAME_SEQ
-    emit("LIVE", "RFB kare alındı", frame_png(), width, height, seq)
+    emit("LIVE", "RFB kare alındı", frame_png(), width, height, seq, current_fps())
 
 
 def close_rfb() -> None:
@@ -241,15 +262,59 @@ def run_rfb(local_port: int) -> None:
         close_rfb()
 
 
+def supervisor(remote_port: int) -> None:
+    """SSH tüneli + RFB oturumunu kalıcı olarak yönetir; kopmada sessizce yeniden bağlanır."""
+    global FORWARD
+    cfg = VDSConfig()
+    attempt = 0
+    while not STOP.is_set():
+        try:
+            if FORWARD is None:
+                FORWARD = WayVNCForward(cfg, remote_port)
+            local_port = FORWARD.start()
+            emit("TUNNEL", f"SSH wayvnc tüneli açık: 127.0.0.1:{local_port} → VDS:{remote_port}")
+            attempt = 0
+        except Exception as exc:  # noqa: BLE001 - tünel hatası UI'a bildirilir, süreç ölmez
+            attempt += 1
+            emit("UNAVAILABLE", f"wayvnc tüneli kurulamadı ({attempt}): {type(exc).__name__}: {exc}")
+            if STOP.wait(min(30.0, 1.5 * attempt)):
+                break
+            continue
+        run_rfb(local_port)
+        if STOP.is_set():
+            break
+        # RFB oturumu koptu: tüneli tazele, son kareyi göster, kısa süre sonra tekrar bağlan.
+        try:
+            FORWARD.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        FORWARD = WayVNCForward(cfg, remote_port)
+        emit("RECONNECTING", "RFB oturumu koptu · son kare gösteriliyor · yeniden bağlanılıyor")
+        emit_last_frame("son kare (yeniden bağlanma)")
+        if STOP.wait(1.5):
+            break
+    close_rfb()
+    if FORWARD is not None:
+        try:
+            FORWARD.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def watch(remote_port: int) -> int:
     global FORWARD
     STOP.clear()
+    # İlk tüneli ana thread'de bir kez dene ki UI hızlı yanıt alsın; hata olsa da süreç yaşar.
     cfg = VDSConfig()
     FORWARD = WayVNCForward(cfg, remote_port)
-    local_port = FORWARD.start()
-    emit("TUNNEL", f"SSH wayvnc tüneli açık: 127.0.0.1:{local_port} → VDS:{remote_port}")
-    print(json.dumps({"ok": True, "local_port": local_port, "remote_port": remote_port}), flush=True)
-    threading.Thread(target=run_rfb, args=(local_port,), daemon=True).start()
+    try:
+        local_port = FORWARD.start(timeout=6.0)
+        emit("TUNNEL", f"SSH wayvnc tüneli açık: 127.0.0.1:{local_port} → VDS:{remote_port}")
+        print(json.dumps({"ok": True, "local_port": local_port, "remote_port": remote_port}), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        emit("UNAVAILABLE", f"ilk wayvnc tüneli kurulamadı: {type(exc).__name__}: {exc}")
+        print(json.dumps({"ok": False, "remote_port": remote_port, "error": str(exc)}), flush=True)
+    threading.Thread(target=supervisor, args=(remote_port,), daemon=True).start()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -265,7 +330,8 @@ def watch(remote_port: int) -> int:
             break
     STOP.set()
     close_rfb()
-    FORWARD.stop()
+    if FORWARD is not None:
+        FORWARD.stop()
     return 0
 
 

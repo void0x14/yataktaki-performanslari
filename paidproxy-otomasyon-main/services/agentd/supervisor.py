@@ -1300,8 +1300,10 @@ class Supervisor:
     def _replay(self, command: dict[str, Any]) -> dict[str, Any]:
         agent_id = str(command.get("agent_id", "") or "") or None
         after_seq = int(command.get("after_seq", 0) or 0)
+        raw_limit = command.get("limit")
+        limit = int(raw_limit) if raw_limit is not None else 100
         return {
-            "events": self.store.events_after(after_seq, agent_id),
+            "events": self.store.events_after(after_seq, agent_id, limit=limit),
             "last_seq": self.store.last_seq,
         }
 

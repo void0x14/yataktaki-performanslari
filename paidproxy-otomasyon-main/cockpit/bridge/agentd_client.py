@@ -45,20 +45,29 @@ class RemoteAgentClient:
         return "127.0.0.1", port
 
     def request(self, command: str, **payload: Any) -> dict[str, Any]:
-        request_id = new_id("request")
-        body = make_command(command, request_id, **payload)
-        host, port = self._local_endpoint()
-        with socket.create_connection((host, port), timeout=15) as sock:
-            sock.settimeout(30)
-            sock.sendall(encode_message(body).encode("utf-8"))
-            reader = sock.makefile("r", encoding="utf-8")
-            while True:
-                line = reader.readline()
-                if not line:
-                    raise ConnectionError(f"agentd closed request connection: {command}")
-                message = decode_message(line)
-                if message.get("kind") != "event" or message.get("request_id") == request_id:
-                    return message
+        for attempt in range(2):
+            try:
+                request_id = new_id("request")
+                body = make_command(command, request_id, **payload)
+                host, port = self._local_endpoint()
+                with socket.create_connection((host, port), timeout=15) as sock:
+                    sock.settimeout(30)
+                    sock.sendall(encode_message(body).encode("utf-8"))
+                    reader = sock.makefile("r", encoding="utf-8")
+                    while True:
+                        line = reader.readline()
+                        if not line:
+                            raise ConnectionError(f"agentd closed request connection: {command}")
+                        message = decode_message(line)
+                        if message.get("kind") != "event" or message.get("request_id") == request_id:
+                            return message
+            except (ConnectionError, OSError):
+                if attempt == 0:
+                    with self._lock:
+                        self.forward.stop()
+                    continue
+                raise
+
 
     def subscribe(
         self,

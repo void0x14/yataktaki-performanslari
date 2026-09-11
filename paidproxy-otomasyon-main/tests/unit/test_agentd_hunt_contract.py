@@ -4,24 +4,137 @@ from services.agentd import ai_runtime
 from services.agentd.ai_runtime import AgentRuntime, _hunter_instruction, validate_tool_arguments
 
 
-def test_masscan_liveness_accepts_only_one_first_bite_port():
-    accepted = validate_tool_arguments(
+def test_masscan_liveness_accepts_planner_port_intent_without_a_single_port_gate():
+    """The planner chooses one port or a port set/range; the code must not
+    force a single first-bite port."""
+    single = validate_tool_arguments(
         "masscan_liveness",
         {"cidr": "9.9.9.0/24", "ports": [3128]},
     )
-    assert accepted["ports"] == [3128]
+    assert single["ports"] == [3128]
 
-    with pytest.raises(ValueError, match="tek ilk port"):
+    multi = validate_tool_arguments(
+        "masscan_liveness",
+        {"cidr": "9.9.9.0/24", "ports": [3128, 1080]},
+    )
+    assert multi["ports"] == [3128, 1080]
+
+    band = validate_tool_arguments(
+        "masscan_liveness",
+        {"cidr": "9.9.9.0/24", "port_spec": "10000-10999"},
+    )
+    assert band["port_spec"] == "10000-10999"
+
+
+def test_masscan_liveness_accepts_wider_than_slash24():
+    """A prefix size must not block a provider target."""
+    accepted = validate_tool_arguments(
+        "masscan_liveness",
+        {"cidr": "79.119.0.0/16", "ports": [7777]},
+    )
+    assert accepted["cidr"] == "79.119.0.0/16"
+
+    with pytest.raises(ValueError, match="publicly routable IPv4"):
         validate_tool_arguments(
             "masscan_liveness",
-            {"cidr": "9.9.9.0/24", "ports": [3128, 1080]},
+            {"cidr": "10.0.0.0/8", "ports": [7777]},
         )
 
-    with pytest.raises(ValueError, match="tek ilk port"):
-        validate_tool_arguments(
-            "masscan_liveness",
-            {"cidr": "9.9.9.0/24", "port_spec": "3128-3129"},
-        )
+
+def test_masscan_liveness_defaults_to_every_port():
+    """No port argument means every port: the first scan must not miss a port
+    because the planner omitted the intent."""
+    accepted = validate_tool_arguments("masscan_liveness", {"cidr": "79.119.0.0/16"})
+    assert accepted["port_spec"] == "1-65535"
+
+
+def test_masscan_wait_and_rate_are_environment_execution_knobs(monkeypatch):
+    from services.agentd.ai_runtime import _masscan_command
+
+    monkeypatch.setenv("PAIDPROXY_MASSCAN_WAIT", "3")
+    command = _masscan_command("79.119.0.0/16", "1-65535", 5000)
+    assert "--wait" in command
+    assert command[command.index("--wait") + 1] == "3"
+    assert command[command.index("--rate") + 1] == "5000"
+
+    monkeypatch.delenv("PAIDPROXY_MASSCAN_WAIT")
+    command = _masscan_command("79.119.0.0/16", "1-65535", 5000)
+    assert command[command.index("--wait") + 1] == "0"
+
+
+def test_decide_uses_only_claude_planner_and_never_falls_back(tmp_path, monkeypatch):
+    """There is no Python pool: a planner failure yields no decision at all."""
+    events: list[tuple] = []
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: events.append((args, kwargs)),
+        stopped=lambda: False,
+    )
+
+    def boom(snapshot):
+        raise RuntimeError("harness down")
+
+    monkeypatch.setattr(ai_runtime, "claude_planner_decide", boom)
+    assert runtime._decide() is None
+    assert any(args and args[0] == "ai_unavailable" for args, _ in events)
+
+
+def test_validate_open_ports_honours_l7_concurrency_env(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    monkeypatch.setenv("PAIDPROXY_L7_CONCURRENCY", "4")
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def fake_validate(host, port, target_url, protocols):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return {"results": [], "validated": []}
+
+    runtime._validate_port_direct = fake_validate
+    result = runtime._validate_open_ports("1.2.3.4", list(range(1, 41)))
+    assert result["checked"] == 40
+    assert peak <= 4
+
+
+def test_validate_open_ports_emits_progress_every_100_ports(tmp_path):
+    events: list[tuple] = []
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: events.append((args, kwargs)),
+        stopped=lambda: False,
+    )
+    runtime._validate_port_direct = (
+        lambda host, port, target_url, protocols: {"results": [], "validated": []}
+    )
+    result = runtime._validate_open_ports("1.2.3.4", list(range(1, 251)))
+    assert result["checked"] == 250
+    progress = [kwargs for args, kwargs in events if args and args[0] == "l7_progress"]
+    assert [item["checked"] for item in progress] == [100, 200]
 
 
 def test_expand_live_ip_keeps_multi_port_vertical_expansion():
@@ -437,8 +550,8 @@ def test_proxy_get_does_not_accept_origin_server_page_as_egress(monkeypatch):
 
 def test_port_scan_live_ip_enumerates_every_open_port(tmp_path):
     """Operator's core flow: masscan gives a live IP, then a real port scanner
-    enumerates ALL its open ports. Every open port becomes a candidate; one
-    dead port must never discard the whole IP."""
+    enumerates ALL its open ports. Every open port goes to L7; one dead port
+    must never discard the whole IP."""
     runtime = AgentRuntime(
         root=tmp_path,
         agent_id="agent-test",
@@ -476,11 +589,11 @@ def test_port_scan_live_ip_enumerates_every_open_port(tmp_path):
     assert result["ip"] == "193.233.126.126"
     assert result["open_ports"] == [16866, 41451]
     assert result["scan_range"] == "1-65535"
-    assert result["candidate_count"] == 2
+    assert result["open_port_count"] == 2
 
 
-def test_open_ports_become_independent_candidates(tmp_path):
-    """Each open port is checked separately; the IP survives per-port failures."""
+def test_open_ports_are_registered_for_validation(tmp_path):
+    """Each open port is work to validate; the IP survives per-port failures."""
     runtime = AgentRuntime(
         root=tmp_path,
         agent_id="agent-test",
@@ -490,8 +603,9 @@ def test_open_ports_become_independent_candidates(tmp_path):
         emit=lambda *args, **kwargs: None,
         stopped=lambda: False,
     )
-    candidates = runtime._candidates_from_ports("193.233.126.126", [16866, 41451])
-    assert candidates == [
+    added = runtime._register_open_ports("193.233.126.126", [16866, 41451])
+    assert added == 2
+    assert runtime._pending_open_ports() == [
         {"host": "193.233.126.126", "port": 16866},
         {"host": "193.233.126.126", "port": 41451},
     ]
@@ -577,10 +691,9 @@ def test_initial_input_live_ips_are_valid_port_scan_provenance(tmp_path):
     ) is None
 
 
-def test_pending_candidates_are_drained_without_llm_discretion(tmp_path):
-    """Every candidate produced by a port scan must eventually be validated.
-    The runtime must track the queue itself instead of hoping the planner
-    remembers to list all 36 of them."""
+def test_open_ports_are_validated_without_llm_discretion(tmp_path):
+    """Every open port produced by a port scan must be validated. The runtime
+    tracks the work itself instead of hoping the planner lists all of them."""
     runtime = AgentRuntime(
         root=tmp_path,
         agent_id="agent-test",
@@ -590,24 +703,21 @@ def test_pending_candidates_are_drained_without_llm_discretion(tmp_path):
         emit=lambda *args, **kwargs: None,
         stopped=lambda: False,
     )
-    runtime._enqueue_candidates([
-        {"host": "193.233.126.126", "port": 22},
-        {"host": "193.233.126.126", "port": 8000},
-        {"host": "193.233.126.179", "port": 16866},
-    ])
-    assert runtime._pending_candidates() == [
+    runtime._register_open_ports("193.233.126.126", [22, 8000])
+    runtime._register_open_ports("193.233.126.179", [16866])
+    assert runtime._pending_open_ports() == [
         {"host": "193.233.126.126", "port": 22},
         {"host": "193.233.126.126", "port": 8000},
         {"host": "193.233.126.179", "port": 16866},
     ]
-    runtime._mark_candidate_validated({"host": "193.233.126.126", "port": 22})
-    assert runtime._pending_candidates() == [
+    runtime._mark_port_validated({"host": "193.233.126.126", "port": 22})
+    assert runtime._pending_open_ports() == [
         {"host": "193.233.126.126", "port": 8000},
         {"host": "193.233.126.179", "port": 16866},
     ]
 
 
-def test_port_scan_result_is_exposed_as_pending_work(tmp_path):
+def test_port_scan_result_is_exposed_as_open_ports_to_validate(tmp_path):
     import services.agentd.ai_runtime as rt
 
     runtime = AgentRuntime(
@@ -641,8 +751,8 @@ def test_port_scan_result_is_exposed_as_pending_work(tmp_path):
         })
     finally:
         rt.socket.create_connection = original
-    assert result["candidate_count"] == 2
-    assert runtime._pending_candidates() == [
+    assert result["open_port_count"] == 2
+    assert runtime._pending_open_ports() == [
         {"host": "193.233.126.126", "port": 22},
         {"host": "193.233.126.126", "port": 8000},
     ]
@@ -796,11 +906,9 @@ def test_port_scan_full_range_is_used_when_requested(tmp_path):
     assert result["scan_range"] == "1-65535"
 
 
-def test_candidate_queue_drains_without_waiting_for_planner(tmp_path):
+def test_open_ports_validate_without_waiting_for_planner(tmp_path):
     """The planner must not be the bottleneck for mechanical validation:
-    queued candidates are validated by the runtime, not one per LLM turn."""
-    import services.agentd.ai_runtime as rt
-
+    open ports are validated by the runtime, not one per LLM turn."""
     runtime = AgentRuntime(
         root=tmp_path,
         agent_id="agent-test",
@@ -810,26 +918,26 @@ def test_candidate_queue_drains_without_waiting_for_planner(tmp_path):
         emit=lambda *args, **kwargs: None,
         stopped=lambda: False,
     )
-    runtime._enqueue_candidates([
-        {"host": "193.233.126.126", "port": 22},
-        {"host": "193.233.126.126", "port": 8000},
-        {"host": "193.233.126.179", "port": 16866},
-    ])
     probed: list[tuple[str, int]] = []
 
     def fake_validate(host, port, target_url, protocols):
         probed.append((host, port))
         return {"protocols": protocols, "validated": [], "results": [], "egress": False}
 
-    runtime._validate_candidate_direct = fake_validate
-    drained = runtime._drain_candidate_queue(max_candidates=10)
-    assert len(probed) == 3
-    assert drained["checked"] == 3
-    assert runtime._pending_candidates() == []
-    assert drained["egress_hits"] == []
+    runtime._validate_port_direct = fake_validate
+    validation = runtime._validate_open_ports("193.233.126.126", [22, 8000, 16866])
+    assert sorted(probed) == [
+        ("193.233.126.126", 22),
+        ("193.233.126.126", 8000),
+        ("193.233.126.126", 16866),
+    ]
+    assert validation["checked"] == 3
+    assert validation["total"] == 3
+    assert runtime._pending_open_ports() == []
+    assert validation["egress_hits"] == []
 
 
-def test_drain_reports_egress_hit_when_candidate_works(tmp_path):
+def test_open_port_validation_reports_egress_hit(tmp_path):
     runtime = AgentRuntime(
         root=tmp_path,
         agent_id="agent-test",
@@ -839,7 +947,6 @@ def test_drain_reports_egress_hit_when_candidate_works(tmp_path):
         emit=lambda *args, **kwargs: None,
         stopped=lambda: False,
     )
-    runtime._enqueue_candidates([{"host": "1.2.3.4", "port": 3128}])
 
     def fake_validate(host, port, target_url, protocols):
         return {
@@ -849,10 +956,10 @@ def test_drain_reports_egress_hit_when_candidate_works(tmp_path):
             "egress": True,
         }
 
-    runtime._validate_candidate_direct = fake_validate
-    drained = runtime._drain_candidate_queue(max_candidates=10)
-    assert drained["checked"] == 1
-    assert drained["egress_hits"] == [{"host": "1.2.3.4", "port": 3128}]
+    runtime._validate_port_direct = fake_validate
+    validation = runtime._validate_open_ports("1.2.3.4", [3128])
+    assert validation["checked"] == 1
+    assert validation["egress_hits"] == [{"host": "1.2.3.4", "port": 3128}]
 
 
 def test_proxy_auth_required_is_recognised_as_real_proxy(tmp_path):
@@ -997,3 +1104,347 @@ def test_recovery_restarts_persisted_running_agent(tmp_path):
     assert restarted == [agent["agent_id"]], "persisted running agent must be restarted"
     assert refreshed["state"] in {"running", "created"}, refreshed["state"]
     assert refreshed["state"] != "unknown"
+
+
+def test_open_port_validation_has_no_arbitrary_cap(tmp_path):
+    """A full port scan can produce thousands of open ports; every one must be
+    worked instead of stopping at an invented 64."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._validate_port_direct = (
+        lambda host, port, target_url, protocols: {"results": [], "validated": []}
+    )
+    result = runtime._validate_open_ports("193.233.126.126", list(range(1, 71)))
+    assert result["checked"] == 70
+    assert result["pending"] == 0
+
+
+def test_expand_live_ip_registers_open_ports_for_validation(tmp_path):
+    """Vertical expansion is the same flow as a full port scan: every open port
+    becomes work to validate instead of being shown and dropped."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    original = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(addr, timeout=None):
+        if addr[1] in (1080, 3128):
+            return FakeConn()
+        raise OSError("closed")
+
+    rt.socket.create_connection = fake
+    try:
+        result = runtime._expand_live_ip({
+            "ip": "193.233.126.126",
+            "ports": [1080, 3128, 9999],
+            "concurrency": 4,
+            "timeout": 0.05,
+        })
+    finally:
+        rt.socket.create_connection = original
+    assert result["open_port_count"] == 2
+    assert runtime._pending_open_ports() == [
+        {"host": "193.233.126.126", "port": 1080},
+        {"host": "193.233.126.126", "port": 3128},
+    ]
+
+
+def test_invoke_port_scan_validates_every_open_port(tmp_path):
+    """The full tool flow: port_scan_live_ip finds open ports and every one of
+    them is validated before the next planner turn."""
+    import services.agentd.ai_runtime as rt
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    original = rt.socket.create_connection
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(addr, timeout=None):
+        if addr[1] in (22, 8000):
+            return FakeConn()
+        raise OSError("closed")
+
+    rt.socket.create_connection = fake
+    runtime._masscan_enumerate_ports = lambda ip, rng, rate: [22, 8000, 9999]
+    probed: list[int] = []
+
+    def fake_validate(host, port, target_url, protocols):
+        probed.append(port)
+        return {"results": [], "validated": []}
+
+    runtime._validate_port_direct = fake_validate
+    try:
+        runtime._invoke("port_scan_live_ip", {
+            "ip": "193.233.126.126",
+            "port_range": "1-65535",
+            "concurrency": 1024,
+            "timeout": 0.05,
+        })
+    finally:
+        rt.socket.create_connection = original
+    result = runtime.last_tool_result
+    assert result["open_port_count"] == 2
+    assert result["validation_total"] == 2
+    assert result["validated_ports"] == 2
+    assert result["pending_open_ports"] == 0
+    assert sorted(probed) == [22, 8000]
+
+
+def test_port_scan_evidence_survives_observation_window_trim(tmp_path):
+    """The live agent lost its L4 evidence when the 100-item observation window
+    rolled over. A real full-port scan must stay valid for the whole run."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._absorb_observation_facts({
+        "tool": "port_scan_live_ip",
+        "result": {
+            "ip": "193.233.126.126",
+            "open_ports": [8000],
+        },
+    })
+    runtime.observations = [{"tool": "runtime_context", "result": {}}]
+    facts = runtime._hunt_facts()
+    assert "193.233.126.126" in facts["live_ips"]
+    assert runtime._target_provenance_error(
+        "port_scan_live_ip", {"ip": "193.233.126.126"}
+    ) is None
+    assert runtime._target_provenance_error(
+        "validate_proxy", {"host": "193.233.126.126", "port": 8000}
+    ) is None
+
+
+def test_myip_owner_ranges_become_provider_target_evidence(tmp_path):
+    """myip.ms depth (All Owner IP Ranges / Other Sites on IP) must feed every
+    provider range into the target evidence, not just the parent range."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime.observations.append({
+        "tool": "browse_public_source",
+        "result": {
+            "url": "https://myip.ms/info/whois/158.173.74.217",
+            "status": 200,
+            "body_preview": "",
+            "owner_ranges": [
+                "198.55.30.0/24",
+                "157.97.120.0/24",
+                "158.173.74.0/24",
+            ],
+        },
+    })
+    facts = runtime._hunt_facts()
+    cidrs = {str(cidr) for cidr in facts["cidrs"]}
+    assert {
+        "198.55.30.0/24",
+        "157.97.120.0/24",
+        "158.173.74.0/24",
+    } <= cidrs
+
+
+def test_tool_outcomes_are_persisted_and_exposed_to_planner(tmp_path):
+    """Planner feedback must be the real outcome of the last tool calls, not a
+    score invented by the code."""
+    import json
+
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._record_outcome(
+        "masscan_liveness",
+        {"cidr": "79.119.0.0/16", "ports": [7777]},
+        {"discovered": [{"ip": "79.119.0.62", "port": 7777}], "cidr": "79.119.0.0/16"},
+        12.5,
+    )
+    path = runtime.output_dir / "outcomes.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["tool"] == "masscan_liveness"
+    assert record["l4_positive_count"] == 1
+    assert record["error_class"] is None
+    snapshot = runtime._planner_snapshot()
+    assert snapshot["recent_outcomes"][-1]["tool"] == "masscan_liveness"
+    assert snapshot["durable_evidence"] == {}
+
+
+def test_real_l4_evidence_survives_agent_restart(tmp_path):
+    """A worker restart must not force the hunter to rediscover L4 evidence it
+    already paid for."""
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._absorb_observation_facts({
+        "tool": "masscan_liveness",
+        "result": {"discovered": [{"ip": "193.233.126.126", "port": 7777}]},
+    })
+    restarted = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    facts = restarted._hunt_facts()
+    assert "193.233.126.126" in facts["live_ips"]
+
+
+def test_l7_outcome_records_real_egress_truthfully(tmp_path):
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    runtime._record_outcome(
+        "validate_proxy",
+        {"host": "79.119.0.62", "port": 7777, "protocols": ["http_connect"]},
+        {
+            "host": "79.119.0.62",
+            "port": 7777,
+            "results": [{"protocol": "http_connect", "egress_confirmed": True}],
+            "validated": [{"protocol": "http_connect", "egress_confirmed": True}],
+        },
+        30.0,
+    )
+    record = runtime._outcome_records[-1]
+    assert record["egress_confirmed"] is True
+    assert record["l7_validated_count"] == 1
+    assert record["l7_results"] == [
+        {"protocol": "http_connect", "egress_confirmed": True}
+    ]
+
+
+def test_claude_planner_decide_passes_prompt_via_stdin_pipe(monkeypatch):
+    """Claude harness must receive prompt on stdin, avoiding Linux ARG_MAX / E2BIG."""
+    from services.agentd.ai_runtime import claude_planner_decide
+    import subprocess
+
+    captured_call = {}
+
+    def fake_run(cmd, input=None, capture_output=False, text=False, timeout=None, env=None, check=False):
+        captured_call["cmd"] = cmd
+        captured_call["input"] = input
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout='{"action": "research", "requested_tools": ["browse_public_source"], "resource_plan": {"tool_arguments": {"browse_public_source": {"url": "https://myip.ms/"}}}}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(ai_runtime, "_claude_planner_binary", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    snapshot = {"agent_id": "test", "ports": list(range(1000))}
+    decision = claude_planner_decide(snapshot)
+
+    assert captured_call["cmd"] == ["/usr/bin/claude", "-p"]
+    assert captured_call["input"] is not None
+    assert "SNAPSHOT:" in captured_call["input"]
+    assert decision["action"] == "research"
+
+
+def test_sanitize_for_snapshot_compacts_massive_port_lists():
+    from services.agentd.ai_runtime import _sanitize_for_snapshot
+
+    payload = {
+        "ip": "1.2.3.4",
+        "open_ports": list(range(5000)),
+        "masscan_reported": list(range(20000)),
+    }
+    sanitized = _sanitize_for_snapshot(payload, max_list=25)
+    assert len(sanitized["open_ports"]) == 25
+    assert sanitized["open_ports_total_count"] == 5000
+    assert len(sanitized["masscan_reported"]) == 25
+    assert sanitized["masscan_reported_total_count"] == 20000
+
+
+def test_tool_arguments_clamps_timeout_and_concurrency_instead_of_failing():
+    from services.agentd.ai_runtime import validate_tool_arguments
+
+    validated = validate_tool_arguments(
+        "expand_live_ip",
+        {
+            "ip": "1.2.3.4",
+            "ports": [8000],
+            "timeout": 25.0,  # exceeds previous 10.0 limit
+            "concurrency": 4096,  # exceeds previous 1024 limit
+        },
+    )
+    assert validated["timeout"] == 10.0
+    assert validated["concurrency"] == 1024
+
+
+def test_autonomous_hunt_decision_targets_pending_or_unscanned(tmp_path):
+    runtime = AgentRuntime(
+        root=tmp_path,
+        agent_id="agent-test",
+        job_id="job-test",
+        kind="gezinme",
+        initial_input="",
+        emit=lambda *args, **kwargs: None,
+        stopped=lambda: False,
+    )
+    # Add an unvalidated IP
+    runtime._fact_store["live_ips"].add("1.2.3.4")
+    decision = runtime._autonomous_hunt_decision()
+    assert decision is not None
+    assert decision["action"] == "expand"
+    assert "port_scan_live_ip" in decision["requested_tools"]
+

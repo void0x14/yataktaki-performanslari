@@ -31,3 +31,19 @@ export function mergeEvents(previous: Row[], incoming: Row[], agentId: string): 
   }
   return [...events.values()].sort((a, b) => Number(a.seq) - Number(b.seq)).slice(-250);
 }
+
+/// Ağır replay yanıtını ana thread'i kilitlemeden parça parça birleştirir:
+/// büyük event listelerinde UI'nin donmaması için kontrollü aralar verilir.
+export async function mergeEventsChunked(previous: Row[], incoming: Row[], agentId: string): Promise<Row[]> {
+  const events = new Map<string, Row>();
+  const source = [...previous, ...incoming];
+  for (let i = 0; i < source.length; i++) {
+    const event = source[i];
+    if (event && event.agent_id === agentId) {
+      const key = String(event.event_id || event.seq || '');
+      if (key) events.set(key, event);
+    }
+    if (i > 0 && i % 400 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+  return [...events.values()].sort((a, b) => Number(a.seq) - Number(b.seq)).slice(-250);
+}

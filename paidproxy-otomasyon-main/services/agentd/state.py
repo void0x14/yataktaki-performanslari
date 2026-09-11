@@ -390,7 +390,7 @@ class StateStore:
     def record_event(self, event_type: str, **fields: Any) -> dict[str, Any]:
         return self.append_event(make_event(event_type, **fields))
 
-    def events_after(self, seq: int = 0, agent_id: str | None = None) -> list[dict[str, Any]]:
+    def events_after(self, seq: int = 0, agent_id: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         threshold = int(seq)
         with self._lock:
             in_memory = [
@@ -402,10 +402,12 @@ class StateStore:
             oldest_in_memory = (
                 int(self._events[0].get("seq", 0) or 0) if self._events else None
             )
+        if limit is not None and len(in_memory) >= limit:
+            return in_memory[-limit:]
         # When the caller asks for history older than the in-memory window, replay
         # it from the append-only log instead of pretending it no longer exists.
         if oldest_in_memory is None or threshold + 1 >= oldest_in_memory:
-            return in_memory
+            return in_memory[-limit:] if limit is not None else in_memory
         from_disk: list[dict[str, Any]] = []
         try:
             with self.events_file.open("r", encoding="utf-8") as handle:
@@ -425,9 +427,10 @@ class StateStore:
                         continue
                     from_disk.append(event)
         except OSError:
-            return in_memory
+            return in_memory[-limit:] if limit is not None else in_memory
         from_disk.sort(key=lambda event: int(event.get("seq", 0) or 0))
-        return from_disk + in_memory
+        combined = from_disk + in_memory
+        return combined[-limit:] if limit is not None else combined
 
     def remove_agent(self, agent_id: str) -> dict[str, Any]:
         with self._lock:

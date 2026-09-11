@@ -2,8 +2,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 fn project_root() -> PathBuf {
@@ -45,26 +46,14 @@ struct Watcher {
 
 /// Kalıcı agentd köprüsü: her komutta yeni Python + SSH açılmaz.
 /// Tek süreç açık kalır, istekler stdin/stdout üzerinden satır satır gider.
-struct Bridge {
+struct BridgeWorker {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<std::process::ChildStdout>,
 }
 
-static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
-
-fn bridge_call(request: Value) -> Result<Value, String> {
-    let mut guard = BRIDGE.lock().map_err(|e| e.to_string())?;
-    let mut need_spawn = guard.is_none();
-    if !need_spawn {
-        if let Some(bridge) = guard.as_mut() {
-            if bridge.child.try_wait().map_err(|e| e.to_string())?.is_some() {
-                need_spawn = true;
-                *guard = None;
-            }
-        }
-    }
-    if need_spawn {
+impl BridgeWorker {
+    fn spawn() -> Result<Self, String> {
         let root = project_root();
         let mut child = Command::new(venv_python(&root))
             .arg(root.join("cockpit/bridge/tauri_bridge.py"))
@@ -77,26 +66,125 @@ fn bridge_call(request: Value) -> Result<Value, String> {
             .map_err(|e| format!("agentd köprüsü başlatılamadı: {e}"))?;
         let stdin = child.stdin.take().ok_or("köprü stdin kullanılamıyor")?;
         let stdout = child.stdout.take().ok_or("köprü stdout kullanılamıyor")?;
-        *guard = Some(Bridge {
+        Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
-        });
+        })
     }
-    let bridge = guard.as_mut().ok_or("köprü yok")?;
-    bridge
-        .stdin
-        .write_all(request.to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    bridge.stdin.write_all(b"\n").map_err(|e| e.to_string())?;
-    bridge.stdin.flush().map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    bridge.stdout.read_line(&mut line).map_err(|e| e.to_string())?;
-    if line.trim().is_empty() {
-        *guard = None;
-        return Err("köprü boş yanıt verdi".into());
+
+    fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
-    serde_json::from_str(&line).map_err(|e| format!("köprü yanıtı çözülemedi: {e}"))
+
+    fn kill(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    /// Tek istek/yanıt turu. Çağıran worker'ı tek başına tuttuğu için kilit yok.
+    fn exchange(&mut self, request: &Value) -> Result<Value, String> {
+        self.stdin
+            .write_all(request.to_string().as_bytes())
+            .map_err(|e| e.to_string())?;
+        self.stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+        self.stdin.flush().map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).map_err(|e| e.to_string())?;
+        if line.trim().is_empty() {
+            return Err("köprü boş yanıt verdi".into());
+        }
+        serde_json::from_str(&line).map_err(|e| format!("köprü yanıtı çözülemedi: {e}"))
+    }
+}
+
+/// Köprü havuzu: salt-okunur sorgular ile canlı kontrol emirleri tek bir
+/// global kilit için sıraya girmez. Boştaki worker'lar yeniden kullanılır,
+/// eşzamanlı çağrılar kendi worker'ını alır (gerekirse yeni süreç açar).
+type SharedWorker = Arc<Mutex<BridgeWorker>>;
+static BRIDGE_IDLE: OnceLock<Mutex<Vec<SharedWorker>>> = OnceLock::new();
+const BRIDGE_MAX: usize = 6;
+
+fn bridge_idle() -> &'static Mutex<Vec<SharedWorker>> {
+    BRIDGE_IDLE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn bridge_acquire() -> Result<SharedWorker, String> {
+    let mut idle = bridge_idle().lock().map_err(|e| e.to_string())?;
+    while let Some(worker) = idle.pop() {
+        let alive = match worker.lock() {
+            Ok(mut guard) => guard.alive(),
+            Err(_) => false,
+        };
+        if alive {
+            return Ok(worker);
+        }
+    }
+    drop(idle);
+    Ok(Arc::new(Mutex::new(BridgeWorker::spawn()?)))
+}
+
+fn bridge_release(worker: SharedWorker) {
+    let healthy = worker.lock().map(|mut w| w.alive()).unwrap_or(false);
+    if healthy {
+        if let Ok(mut idle) = bridge_idle().lock() {
+            if idle.len() < BRIDGE_MAX {
+                idle.push(worker);
+                return;
+            }
+        }
+        // Havuz dolu: sağlıklı süreç de olsa sızdırmamak için kapat.
+        if let Ok(mut guard) = worker.lock() {
+            guard.kill();
+        }
+    } else if let Ok(mut guard) = worker.lock() {
+        guard.kill();
+    }
+}
+
+/// Sınırlı süreli köprü çağrısı. Bloklayıcı I/O ayrı iş parçacığında yapılır;
+/// süre aşılırsa worker düşürülür ve UI asla kilitlenmez.
+fn bridge_call_bounded(request: Value, timeout: Duration) -> Result<Value, String> {
+    let worker = bridge_acquire()?;
+    let worker_for_thread = worker.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let result = {
+            let mut guard = match worker_for_thread.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = tx.send(Err("köprü kilidi zehirlendi".to_string()));
+                    return;
+                }
+            };
+            guard.exchange(&request)
+        };
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(value)) => {
+            bridge_release(worker);
+            Ok(value)
+        }
+        Ok(Err(err)) => {
+            // Hatalı worker'ı havuza koyma; öldürülüp atılır. İş bittiği için kilit serbest.
+            if let Ok(mut guard) = worker.lock() {
+                guard.kill();
+            }
+            Err(err)
+        }
+        Err(_) => {
+            // Zaman aşımında arka iş parçacığı hâlâ kilitte bloklu olabilir; bu yüzden
+            // kilidi BEKLEME. try_lock başarısızsa worker kendi başına düşer, UI kilitlenmez.
+            if let Ok(mut guard) = worker.try_lock() {
+                guard.kill();
+            }
+            Err(format!(
+                "köprü {} sn içinde yanıt vermedi (zaman aşımı)",
+                timeout.as_secs_f32()
+            ))
+        }
+    }
 }
 
 static WATCHER: Mutex<Option<Arc<Mutex<Watcher>>>> = Mutex::new(None);
@@ -125,6 +213,11 @@ fn send_watcher_line(line: &str) -> Result<(), String> {
 
 /// RFB izleyici sürecini başlatır; stdout satırlarını `show_base` event'ine yayınlar.
 fn spawn_watcher(app: &AppHandle, remote_port: u16) -> Result<(), String> {
+    let stale = WATCHER.lock().map_err(|e| e.to_string())?.is_some();
+    if stale {
+        drop(WATCHER.lock().map_err(|e| e.to_string())?);
+        let _ = stop_watcher();
+    }
     let mut guard = WATCHER.lock().map_err(|e| e.to_string())?;
     if guard.is_some() {
         return Ok(());
@@ -220,32 +313,39 @@ fn stop_watcher() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn agentd(command: String, payload: Value) -> Result<Value, String> {
-    use std::time::{Duration, Instant};
+async fn agentd(command: String, payload: Value) -> Result<Value, String> {
     let mut request = payload.as_object().cloned().unwrap_or_default();
     request.insert("command".into(), Value::String(command.clone()));
     // Ağır komutları buda: status artık event_history taşımaz, liste hafifler.
     if command == "status" {
         request.insert("slim".into(), Value::Bool(true));
     }
-    let start = Instant::now();
-    let timeout = Duration::from_secs(15);
-    loop {
-        match bridge_call(Value::Object(request.clone())) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                if start.elapsed() >= timeout {
-                    return Err(err);
-                }
-                // Köprü öldüyse bir kez yeniden dene.
-                if err.contains("boş yanıt") || err.contains("köprü yok") {
-                    thread::sleep(std::time::Duration::from_millis(100));
-                    continue;
-                }
-                return Err(err);
-            }
-        }
+    let request = Value::Object(request);
+    // Salt-okunur/sık çağrılan komutlar kısa zaman aşımıyla UI'yı bekletmez.
+    let timeout = match command.as_str() {
+        "status" | "replay" => Duration::from_secs(8),
+        "display_select" | "display_release" => Duration::from_secs(6),
+        _ => Duration::from_secs(15),
+    };
+    tauri::async_runtime::spawn_blocking(move || bridge_call_bounded(request, timeout))
+        .await
+        .map_err(|e| format!("köprü görevi düştü: {e}"))?
+}
+
+/// Kısa yoldan senkron agentd çağrısı: VNC komutları spawn_blocking içinden
+/// çağırır, böylece komut işleyici thread'i bloklanmaz.
+fn run_agentd_sync(command: &str, payload: Value) -> Result<Value, String> {
+    let mut request = payload.as_object().cloned().unwrap_or_default();
+    request.insert("command".into(), Value::String(command.to_string()));
+    if command == "status" {
+        request.insert("slim".into(), Value::Bool(true));
     }
+    let timeout = match command {
+        "status" | "replay" => Duration::from_secs(8),
+        "display_select" | "display_release" => Duration::from_secs(6),
+        _ => Duration::from_secs(15),
+    };
+    bridge_call_bounded(Value::Object(request), timeout)
 }
 
 /// UI'ın seçtiği ajan kimliği (frontend `set_display_target` ile yazar).
@@ -266,14 +366,9 @@ fn display_target(app: &AppHandle) -> Result<String, String> {
     Ok(guard.clone())
 }
 
-/// Kontrolü Al: gerçek `display_select` + wayvnc SSH tüneli + RFB izleyici.
-#[tauri::command]
-fn vnc_take(app: AppHandle) -> Result<Value, String> {
-    let agent_id = display_target(&app)?;
-    if agent_id.is_empty() {
-        return Err("Önce ajan seçin".into());
-    }
-    let selection = agentd("display_select".into(), json!({ "agent_id": agent_id }))?;
+/// `display_select` sonucunu doğrular ve gerçek wayvnc portunu çıkarır.
+fn select_live_target(agent_id: &str) -> Result<(Value, u16), String> {
+    let selection = run_agentd_sync("display_select", json!({ "agent_id": agent_id }))?;
     if !selection.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         let detail = selection
             .get("detail")
@@ -296,20 +391,59 @@ fn vnc_take(app: AppHandle) -> Result<Value, String> {
         .get("wayvnc_loopback_port")
         .and_then(Value::as_u64)
         .ok_or("capability gerçek wayvnc portu yayınlamadı")? as u16;
-    spawn_watcher(&app, remote_port)?;
-    Ok(selection)
+    Ok((selection, remote_port))
+}
+
+/// Kontrolü Al: gerçek `display_select` + wayvnc SSH tüneli + RFB izleyici.
+#[tauri::command]
+async fn vnc_take(app: AppHandle) -> Result<Value, String> {
+    let agent_id = display_target(&app)?;
+    if agent_id.is_empty() {
+        return Err("Önce ajan seçin".into());
+    }
+    let app_for_block = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (selection, remote_port) = select_live_target(&agent_id)?;
+        spawn_watcher(&app_for_block, remote_port)?;
+        Ok(selection)
+    })
+    .await
+    .map_err(|e| format!("VNC alma görevi düştü: {e}"))?
+}
+
+/// Salt-okunur izleme: `display_select` + RFB izleyici, girdi kapalidir.
+/// Tek tikla canli VDS akisi icin Gözlemle butonu bunu cagirir.
+#[tauri::command]
+async fn vnc_watch(app: AppHandle) -> Result<Value, String> {
+    let agent_id = display_target(&app)?;
+    if agent_id.is_empty() {
+        return Err("Önce ajan seçin".into());
+    }
+    let app_for_block = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (selection, remote_port) = select_live_target(&agent_id)?;
+        spawn_watcher(&app_for_block, remote_port)?;
+        Ok(selection)
+    })
+    .await
+    .map_err(|e| format!("VNC izleme görevi düştü: {e}"))?
 }
 
 /// Ajana Geri Ver: gerçek `display_release` + RFB izleyiciyi kapat.
 #[tauri::command]
-fn vnc_release(app: AppHandle) -> Result<Value, String> {
-    let release = agentd("display_release".into(), json!({}))?;
-    stop_watcher()?;
-    let _ = app.emit(
-        "show_base",
-        json!({"state": "RELEASED", "detail": "Gerçek VDS yüzeyi bırakıldı"}),
-    );
-    Ok(release)
+async fn vnc_release(app: AppHandle) -> Result<Value, String> {
+    let app_for_block = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let release = run_agentd_sync("display_release", json!({}))?;
+        stop_watcher()?;
+        let _ = app_for_block.emit(
+            "show_base",
+            json!({"state": "RELEASED", "detail": "Gerçek VDS yüzeyi bırakıldı"}),
+        );
+        Ok(release)
+    })
+    .await
+    .map_err(|e| format!("VNC bırakma görevi düştü: {e}"))?
 }
 
 /// Ölü izleyiciyi düşürür; sonraki `vnc_take` yeni süreç başlatır.
@@ -342,7 +476,13 @@ fn vnc_input(
 
 /// Seçili ajanın gerçek kare artifact'ini indirip veri URL'si olarak döner.
 #[tauri::command]
-fn fetch_frame(agent_id: String, frame_ref: String) -> Result<Value, String> {
+async fn fetch_frame(agent_id: String, frame_ref: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || fetch_frame_blocking(agent_id, frame_ref))
+        .await
+        .map_err(|e| format!("frame görevi düştü: {e}"))?
+}
+
+fn fetch_frame_blocking(agent_id: String, frame_ref: String) -> Result<Value, String> {
     if agent_id.is_empty() || frame_ref.is_empty() {
         return Err("ajan ve frame referansı gerekli".into());
     }
@@ -409,6 +549,7 @@ pub fn run() {
             agentd,
             set_display_target,
             vnc_take,
+            vnc_watch,
             vnc_release,
             vnc_stop,
             vnc_input,

@@ -97,12 +97,20 @@ def copy_artifact(
 class SSHPortForward:
     """Masaüstünden VDS loopback agentd'e giden tek SSH tüneli."""
 
-    def __init__(self, cfg: VDSConfig, remote_port: int | None = None) -> None:
+    def __init__(
+        self,
+        cfg: VDSConfig,
+        remote_port: int | None = None,
+        *,
+        reuse_persistent_port: bool = True,
+    ) -> None:
         self.cfg = cfg
         self.remote_port = int(remote_port or cfg.remote_agentd_port)
         self.process: subprocess.Popen[str] | None = None
         self.local_port: int | None = None
         self.last_error = ""
+        # agentd kalici dis tuneli paylasir; wayvnc kendi ozel tunelini acar.
+        self.reuse_persistent_port = bool(reuse_persistent_port)
 
     @staticmethod
     def _free_local_port() -> int:
@@ -113,15 +121,15 @@ class SSHPortForward:
     def start(self, timeout: float = 15.0) -> int:
         if self.process is not None and self.process.poll() is None and self.local_port:
             return self.local_port
-        local_port = self.cfg.local_agentd_port
-        try:
-            with socket.create_connection(("127.0.0.1", local_port), timeout=1.0):
-                self.local_port = local_port
-                return local_port
-        except OSError as exc:
-            raise ConnectionError(
-                f"Kalıcı yerel agentd tüneli hazır değil: 127.0.0.1:{local_port} ({exc})"
-            ) from exc
+        local_port = self._free_local_port()
+        if self.reuse_persistent_port:
+            persistent = int(self.cfg.local_agentd_port)
+            try:
+                with socket.create_connection(("127.0.0.1", persistent), timeout=1.0):
+                    self.local_port = persistent
+                    return persistent
+            except OSError:
+                pass
         key = str(Path(self.cfg.key).expanduser())
         destination = f"{local_port}:127.0.0.1:{self.remote_port}"
         command = [
@@ -202,4 +210,4 @@ class WayVNCForward(SSHPortForward):
     """VDS'de yalnız 127.0.0.1'e bağlı wayvnc'i SSH ile yerel canlı görünüme taşır."""
 
     def __init__(self, cfg: VDSConfig, remote_port: int | None = None) -> None:
-        super().__init__(cfg, remote_port or cfg.wayvnc_loopback_port)
+        super().__init__(cfg, remote_port or cfg.wayvnc_loopback_port, reuse_persistent_port=False)
