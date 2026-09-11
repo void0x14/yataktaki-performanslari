@@ -23,6 +23,7 @@ class VDSConfig:
     remote_dir: str = os.environ.get("PAIDPROXY_VDS_DIR", "~/paidproxy-otomasyon")
     remote_agentd_port: int = int(os.environ.get("PAIDPROXY_VDS_AGENTD_PORT", "8787") or 8787)
     wayvnc_loopback_port: int = int(os.environ.get("PAIDPROXY_WAYVNC_LOOPBACK_PORT", "5900") or 5900)
+    novnc_ws_port: int = int(os.environ.get("PAIDPROXY_NOVNC_WS_PORT", "5901") or 5901)
     connect_timeout: int = int(os.environ.get("PAIDPROXY_VDS_CONNECT_TIMEOUT", "10") or 10)
     local_agentd_port: int = int(os.environ.get("PAIDPROXY_LOCAL_AGENTD_PORT", "28787") or 28787)
 
@@ -211,3 +212,12 @@ class WayVNCForward(SSHPortForward):
 
     def __init__(self, cfg: VDSConfig, remote_port: int | None = None) -> None:
         super().__init__(cfg, remote_port or cfg.wayvnc_loopback_port, reuse_persistent_port=False)
+
+
+class NoVNCWebSocketForward(SSHPortForward):
+    """VDS 127.0.0.1:5901 websockify uç noktasını yerel porta tüneller.
+    Cockpit webview'ı doğrudan WebSocket RFB noVNC ile bağlanır (sıfır Base64 / sıfır IPC yükü)."""
+
+    def __init__(self, cfg: VDSConfig, remote_port: int | None = None) -> None:
+        super().__init__(cfg, remote_port or cfg.novnc_ws_port, reuse_persistent_port=False)
+

@@ -24,7 +24,7 @@ import re
 import socket
 import ssl
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 logger = logging.getLogger("agentd.fast_triage")
@@ -359,12 +359,17 @@ class FastTriageEngine:
         host_port_pairs: list[tuple[str, int]],
         protocols: list[str] | None = None,
         egress_target: dict[str, Any] | None = None,
+        check_cancel: Callable[[], bool] | None = None,
     ) -> list[dict[str, Any]]:
         """Concurrently triage hundreds/thousands of host-port candidates."""
         sem = asyncio.Semaphore(self.concurrency)
 
         async def _worker(h: str, p: int) -> dict[str, Any]:
+            if check_cancel and check_cancel():
+                return {"host": h, "port": p, "results": [], "canceled": True}
             async with sem:
+                if check_cancel and check_cancel():
+                    return {"host": h, "port": p, "results": [], "canceled": True}
                 return await self.probe_endpoint(h, p, protocols, egress_target)
 
         tasks = [_worker(h, p) for h, p in host_port_pairs]
@@ -377,13 +382,16 @@ def run_fast_triage(
     connect_timeout: float = 1.5,
     retries: int = 2,
     output_path: Path | str | None = None,
+    check_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Synchronous entry point for running fast triage and persisting live proxies."""
     engine = FastTriageEngine(concurrency=concurrency, connect_timeout=connect_timeout, retries=retries)
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        results = loop.run_until_complete(engine.triage_cluster(host_port_pairs))
+        results = loop.run_until_complete(
+            engine.triage_cluster(host_port_pairs, check_cancel=check_cancel)
+        )
     finally:
         loop.close()
 

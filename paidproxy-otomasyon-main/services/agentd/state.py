@@ -379,6 +379,12 @@ class StateStore:
                 handle.write(json.dumps(directive, ensure_ascii=False, separators=(",", ":")) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+            # Preemptive Interrupt Token: instantly cancel in-flight socket/scan tasks
+            signal_file = self.agents_dir / agent_id / "interrupt.signal"
+            try:
+                signal_file.write_text(json.dumps(directive, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
             directives = list(agent.get("operator_directives", []))
             directives.append(directive)
             agent["operator_directives"] = directives[-100:]

@@ -928,6 +928,25 @@ class AgentRuntime:
         self._register_tools()
         self._load_portscan_evidence()
 
+    def check_interrupt(self) -> bool:
+        """Section 4.C: Preemptive Interrupt Token. True if operator issued urgent stop/change."""
+        return (self.agent_dir / "interrupt.signal").is_file()
+
+    def consume_interrupt(self) -> dict[str, Any] | None:
+        """Consume the interrupt signal file and return its directive payload."""
+        sig_path = self.agent_dir / "interrupt.signal"
+        if not sig_path.is_file():
+            return None
+        try:
+            data = json.loads(sig_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {"interrupted": True}
+        try:
+            sig_path.unlink()
+        except OSError:
+            pass
+        return data
+
     def _register_tools(self) -> None:
         self.catalog.register(
             "observe_vds_surface",
@@ -1416,7 +1435,7 @@ class AgentRuntime:
                         continue
                 consecutive_no_tool_rounds = 0
                 for tool_name, arguments in tools:
-                    if self.stopped():
+                    if self.stopped() or self.check_interrupt():
                         break
                     self._invoke(tool_name, arguments)
             self.emit(
@@ -2290,6 +2309,19 @@ class AgentRuntime:
                     next_action="AI yeni kanıt veya gözlem seçecek",
                 )
         except Exception as exc:
+            if "operator preemptive interrupt" in str(exc):
+                self.consume_interrupt()
+                self._read_operator_directives()
+                self.emit(
+                    "operator_preempted",
+                    "Devam eden tarama operatör müdahalesiyle anında kesildi.",
+                    state="running",
+                    tool=name,
+                    target=f"vds://agent/tool/{name}",
+                    operator_action="preemptive_interrupt",
+                    next_action="Yeni operatör yönlendirmesi derhal yürütülüyor",
+                )
+                return
             error = {"error": f"{type(exc).__name__}: {exc}", "tool": name, "at": _utc()}
             self.last_tool_result = error
             self.observations.append({"tool": name, "result": error, "at": _utc()})
@@ -2472,9 +2504,9 @@ class AgentRuntime:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
             assert process.stdout is not None
             for line in process.stdout:
-                if self.stopped():
+                if self.stopped() or self.check_interrupt():
                     process.terminate()
-                    raise RuntimeError("operator stop during Masscan")
+                    raise RuntimeError("operator preemptive interrupt during Masscan")
                 output.write(line)
                 text = line.strip()
                 parts = text.split()
@@ -2523,9 +2555,9 @@ class AgentRuntime:
         ) as process:
             assert process.stdout is not None
             for line in process.stdout:
-                if self.stopped():
+                if self.stopped() or self.check_interrupt():
                     process.terminate()
-                    raise RuntimeError("operator stop during port scan")
+                    raise RuntimeError("operator preemptive interrupt during port scan")
                 parts = line.strip().split()
                 if len(parts) >= 4 and parts[0] == "open":
                     try:
@@ -2989,6 +3021,7 @@ class AgentRuntime:
             connect_timeout=timeout,
             retries=retries,
             output_path=self.output_dir / "validated-proxies.jsonl",
+            check_cancel=lambda: (self.stopped() or self.check_interrupt()),
         )
         for res in summary.get("all_results", []):
             self._mark_port_validated({"host": host, "port": int(res["port"])})
