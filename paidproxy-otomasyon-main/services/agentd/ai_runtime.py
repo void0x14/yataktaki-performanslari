@@ -1402,30 +1402,26 @@ class AgentRuntime:
         Ensures the agent makes real forward progress with validate_proxy,
         port_scan_live_ip, or masscan_liveness instead of remaining stuck.
         """
-        # 1. Unvalidated open ports from pending list
+        # 1. Unvalidated open ports from pending list: batch triage all ports for this host
         pending = self._pending_open_ports()
         if pending:
-            item = pending[0]
-            host = str(item.get("host") or item.get("ip") or "").strip()
-            port = int(item.get("port") or 0)
-            if host and port > 0:
-                protocols = list(item.get("protocols") or ["http_connect", "socks5", "socks4"])
-                target_url = str(item.get("target_url") or "https://httpbin.org/ip")
+            host = str(pending[0].get("host") or pending[0].get("ip") or "").strip()
+            host_ports = [int(p["port"]) for p in pending if str(p.get("host") or p.get("ip")) == host]
+            if host and host_ports:
                 return {
-                    "action": "deep_test",
-                    "requested_tools": ["validate_proxy"],
+                    "action": "fast_triage",
+                    "requested_tools": ["fast_triage"],
                     "resource_plan": {
                         "tool_arguments": {
-                            "validate_proxy": {
+                            "fast_triage": {
                                 "host": host,
-                                "port": port,
-                                "target_url": target_url,
-                                "protocols": protocols,
+                                "ports": host_ports,
+                                "concurrency": min(500, len(host_ports)),
                             }
                         }
                     },
-                    "expected_value": f"Deterministik otonom: {host}:{port} açık portu L7 için doğrulanıyor.",
-                    "counter_evidence": ["AI planlayıcı yanıt vermedi; deterministik avcı kuralı devreye girdi."],
+                    "expected_value": f"Deterministik otonom: {host} için {len(host_ports)} açık port asenkron L7 ile taranıyor.",
+                    "counter_evidence": ["Tek tek port döngüsü yerine toplu asenkron triage çalıştırıldı."],
                     "provider": "autonomous-hunter",
                     "model": "deterministic-v1",
                 }
@@ -1547,16 +1543,12 @@ class AgentRuntime:
                 "L4 canlılık ile L7 gerçek-site "
                 "çıkışını karıştırma. Masscan yalnız ilk canlılık içindir; canlı IP'de "
                 "dikey genişleme için expand_live_ip socket aracını seç. "
-                "Masscan bir canlı IP verdiyse port_scan_live_ip ile o IP'nin TÜM "
-                "açık portlarını çıkar; her açık port tek tek "
-                "validate_proxy edilir. Bir port ölü diye IP'yi bırakma. "
-                "Sabit skor üretme. Açık portlar taranır taranmaz mekanik "
-                "doğrulamaya gider; snapshot.open_ports_to_validate BOŞ DEĞİLSE "
-                "kalanları validate_proxy ile bitir ve boşalana kadar yeni "
-                "hedefe geçme. snapshot.unvalidated_open_ports bir IP için "
-                "missing_count > 0 gösteriyorsa o IP'nin port_scan_live_ip veya "
-                "expand_live_ip çağrısıyla eksik portlarını kapat; hiçbir açık "
-                "portu doğrulanmadan bırakma. "
+                "Masscan bir canlı IP verdiyse port_scan_live_ip veya expand_live_ip ile açık portları çıkar. "
+                "Birden fazla açık port veya sticky port aralığı olduğunda tek tek saatlerce uğraşma; "
+                "fast_triage aracıyla toplu olarak asenkron L7 HTTP CONNECT ve SOCKS5 el sıkışmasını çalıştır. "
+                "snapshot.open_ports_to_validate içinde açık portlar varsa fast_triage ile tek seferde doğrula. "
+                "Hedef keşfinde körü körüne tahmin yürütme; recon_bgp ile sağlayıcının anons ettiği BGP prefix'lerini "
+                "ve pilot dilim önerisini al. "
                 "Gerçek bir HTTP(S) hedefini target_url alanında kendin seçmeden L7 doğrulama "
                 "isteme. validate_proxy için protocols alanında hangi protokolleri deneyeceğini "
                 "açıkça seç; protokol listesi eksikse araç çağrısı yapma. publish_proxy için "
