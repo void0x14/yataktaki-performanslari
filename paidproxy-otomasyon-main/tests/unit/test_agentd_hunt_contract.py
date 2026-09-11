@@ -34,6 +34,24 @@ def test_masscan_liveness_accepts_wider_than_slash24():
     )
     assert accepted["cidr"] == "79.119.0.0/16"
 
+
+def test_fast_triage_tool_argument_validation():
+    """fast_triage accepts host/ip with list of ports."""
+    res = validate_tool_arguments("fast_triage", {"host": "1.2.3.4", "ports": [8080, 1080], "concurrency": 250})
+    assert res["host"] == "1.2.3.4"
+    assert res["ports"] == [1080, 8080]
+    assert res["concurrency"] == 250
+
+
+def test_recon_bgp_tool_argument_validation():
+    """recon_bgp accepts ASN or IP."""
+    res_asn = validate_tool_arguments("recon_bgp", {"asn": "AS209207", "org": "Digital Hosting"})
+    assert res_asn["asn"] == "AS209207"
+    assert res_asn["org"] == "Digital Hosting"
+
+    res_ip = validate_tool_arguments("recon_bgp", {"ip": "138.124.79.1"})
+    assert res_ip["ip"] == "138.124.79.1"
+
     with pytest.raises(ValueError, match="publicly routable IPv4"):
         validate_tool_arguments(
             "masscan_liveness",

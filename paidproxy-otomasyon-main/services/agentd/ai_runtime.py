@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from proxy_pipeline.tarama_plani import bant_listesi
+from services.agentd.fast_triage import FastTriageEngine, run_fast_triage
+from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
 
 
 _CLAUDE_PLANNER_TIMEOUT = 240
@@ -170,6 +172,8 @@ CONTROLLED_TOOLS = {
     "expand_live_ip",
     "validate_proxy",
     "publish_proxy",
+    "fast_triage",
+    "recon_bgp",
 }
 
 
@@ -328,6 +332,14 @@ ARGUMENT_CONTRACTS: dict[str, dict[str, Any]] = {
             "quality_rationale",
         ],
         "protocols": ["http_connect", "socks5", "socks4", "socks4a"],
+    },
+    "fast_triage": {
+        "required": ["host OR ip"],
+        "optional": ["ports", "concurrency", "timeout", "retries"],
+    },
+    "recon_bgp": {
+        "required": ["asn OR ip"],
+        "optional": ["org"],
     },
 }
 
@@ -765,6 +777,30 @@ def validate_tool_arguments(name: str, arguments: Any) -> dict[str, Any]:
             result[field] = value
         return result
 
+    if name == "fast_triage":
+        _validated_host_or_ip(arguments, result)
+        ports = _ports_from_spec(arguments.get("ports"))
+        if not ports and "port" in arguments:
+            ports = [_validated_port(arguments.get("port"))]
+        result["ports"] = ports or []
+        if "concurrency" in arguments:
+            try:
+                result["concurrency"] = max(1, min(1000, int(arguments["concurrency"])))
+            except (TypeError, ValueError):
+                pass
+        return result
+
+    if name == "recon_bgp":
+        if "asn" in arguments:
+            result["asn"] = str(arguments["asn"]).strip()
+        elif "ip" in arguments:
+            result["ip"] = str(arguments["ip"]).strip()
+        else:
+            raise ValueError("recon_bgp için asn veya ip gerekli")
+        if "org" in arguments:
+            result["org"] = str(arguments["org"]).strip()
+        return result
+
     raise ValueError(f"tool not registered: {name}")
 
 
@@ -920,6 +956,18 @@ class AgentRuntime:
             "Önceden doğrulanmış kanıt referansını teslim kuyruğuna yazar; doğrulanmamış uç kabul etmez.",
             self._publish_proxy,
             ("write", "delivery"),
+        )
+        self.catalog.register(
+            "fast_triage",
+            "1000 eşzamanlı asenkron soket ile açık portları L7 HTTP CONNECT ve SOCKS5 el sıkışmasına sokar; nötr egress (1.1.1.1/trace) ile anında doğrular.",
+            self._fast_triage_tool,
+            ("network", "l7", "async_triage"),
+        )
+        self.catalog.register(
+            "recon_bgp",
+            "Hedef ASN veya IP'nin anons ettiği tüm BGP prefix'lerini çeker, hedefi sınıflandırır ve pilot dilim önerir.",
+            self._recon_bgp_tool,
+            ("recon", "bgp", "intel"),
         )
 
     @staticmethod
@@ -2849,6 +2897,54 @@ class AgentRuntime:
             "proxy": record,
             "evidence_refs": [f"agent://{self.agent_id}/{proxies_path.relative_to(self.agent_dir)}"],
             "output_ref": f"agent://{self.agent_id}/{proxies_path.relative_to(self.agent_dir)}",
+        }
+
+    def _fast_triage_tool(self, args: dict[str, Any]) -> dict[str, Any]:
+        host = str(args.get("ip") or args.get("host") or "").strip()
+        ports = _ports_from_spec(args.get("ports"))
+        if not ports and "port" in args:
+            try:
+                ports = [int(args["port"])]
+            except (TypeError, ValueError):
+                pass
+        if not ports:
+            # use pending open ports for this host
+            ports = [int(p["port"]) for p in self._pending_open_ports() if str(p.get("host")) == host]
+        if not ports:
+            return {"working_note": f"{host} için taranacak açık port bulunamadı.", "live_count": 0, "live_proxies": []}
+        concurrency = int(args.get("concurrency", 500) or 500)
+        timeout = float(args.get("timeout", 1.5) or 1.5)
+        retries = int(args.get("retries", 2) or 2)
+        summary = run_fast_triage(
+            [(host, int(p)) for p in ports],
+            concurrency=concurrency,
+            connect_timeout=timeout,
+            retries=retries,
+            output_path=self.output_dir / "validated-proxies.jsonl",
+        )
+        for res in summary.get("all_results", []):
+            self._mark_port_validated({"host": host, "port": int(res["port"])})
+        live_proxies = summary.get("live_proxies", [])
+        return {
+            "working_note": f"{host} için {len(ports)} port asenkron olarak tarandı: {len(live_proxies)} çalışan proxy doğrulandı.",
+            "host": host,
+            "scanned_count": len(ports),
+            "live_count": len(live_proxies),
+            "live_proxies": live_proxies,
+        }
+
+    def _recon_bgp_tool(self, args: dict[str, Any]) -> dict[str, Any]:
+        asn = str(args.get("asn") or "").strip()
+        ip = str(args.get("ip") or "").strip()
+        if not asn and ip:
+            ctx = self._inspect_owner_context({"ip": ip})
+            asn = str(ctx.get("asn") or "")
+        if not asn:
+            raise ValueError("recon_bgp için geçerli bir ASN veya IP gerekli")
+        plan = plan_grounded_hunt(asn, str(args.get("org") or "Unknown Org"))
+        return {
+            "working_note": f"{asn} için BGP ve hedef istihbarat planı hazırlandı. Pilot dilim: {plan.get('pilot_prefix')}.",
+            "recon_plan": plan,
         }
 
     def _resolve_agent_ref(self, reference: str) -> Path:
