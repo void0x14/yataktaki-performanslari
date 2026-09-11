@@ -29,6 +29,7 @@ from proxy_pipeline.tarama_plani import bant_listesi
 from services.agentd.fast_triage import FastTriageEngine, run_fast_triage
 from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
 from services.agentd.scanned_ledger import ScannedLedger
+from services.agentd.dataset_recorder import ScreenRecorder, TrajectoryLogger
 
 
 _CLAUDE_PLANNER_TIMEOUT = 240
@@ -895,6 +896,15 @@ class AgentRuntime:
         self.output_dir = self.agent_dir / "outputs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.ledger = ScannedLedger(self.root / "scanned_ledger.json")
+        self.screen_recorder = ScreenRecorder(
+            output_path=self.agent_dir / "screen.mp4",
+            output_display=os.environ.get("WF_RECORDER_OUTPUT", "HEADLESS-1"),
+        )
+        self.trajectory_logger = TrajectoryLogger(
+            trajectory_path=self.agent_dir / "trajectory.jsonl",
+            agent_id=self.agent_id,
+            screen_recorder=self.screen_recorder,
+        )
         self.catalog = ToolCatalog()
         self.observations: list[dict[str, Any]] = []
         self.last_decision: dict[str, Any] = {}
@@ -1314,109 +1324,113 @@ class AgentRuntime:
         return tools
 
     def run(self) -> int:
-        self.emit(
-            "tool_catalog",
-            "VDS araç kataloğu AI kararına açıldı.",
-            state="running",
-            tool="tool_catalog",
-            target="vds://agent/tools",
-            evidence_refs=[f"agent://{self.agent_id}/tool-catalog.json"],
-            next_action="AI ilk gözlemi seçecek",
-            tool_count=len(self.catalog.describe()),
-        )
-        _json_write(self.output_dir / "tool-catalog.json", self.catalog.describe())
-        if self.stopped():
-            return 130
-        runtime_context = self._observe_vds_surface({})
-        self._runtime_preflight_done = True
-        context_ref = _json_write(self.output_dir / "runtime-context.json", runtime_context)
-        self.observations.append({"tool": "runtime_context", "result": runtime_context, "at": _utc()})
-        self.last_tool_result = dict(runtime_context)
-        self.emit(
-            "runtime_context",
-            "VDS runtime bağlamı AI kararından önce salt okunur olarak hazırlandı; operasyon aracı zorlanmadı.",
-            state="running",
-            tool="runtime_context",
-            target="vds://agent/runtime",
-            evidence_refs=[context_ref],
-            output_ref=context_ref,
-            next_action="AI ilk operasyonel adımı seçecek",
-        )
-        idle_rounds = 0
-        consecutive_no_tool_rounds = 0
-        while not self.stopped():
-            self._read_operator_directives()
-            self.step += 1
-            decision = self._decide()
-            if decision is None:
-                idle_rounds += 1
-                if idle_rounds >= 3:
-                    fallback_decision = self._autonomous_hunt_decision()
-                    if fallback_decision:
+        self.screen_recorder.start()
+        try:
+            self.emit(
+                "tool_catalog",
+                "VDS araç kataloğu AI kararına açıldı.",
+                state="running",
+                tool="tool_catalog",
+                target="vds://agent/tools",
+                evidence_refs=[f"agent://{self.agent_id}/tool-catalog.json"],
+                next_action="AI ilk gözlemi seçecek",
+                tool_count=len(self.catalog.describe()),
+            )
+            _json_write(self.output_dir / "tool-catalog.json", self.catalog.describe())
+            if self.stopped():
+                return 130
+            runtime_context = self._observe_vds_surface({})
+            self._runtime_preflight_done = True
+            context_ref = _json_write(self.output_dir / "runtime-context.json", runtime_context)
+            self.observations.append({"tool": "runtime_context", "result": runtime_context, "at": _utc()})
+            self.last_tool_result = dict(runtime_context)
+            self.emit(
+                "runtime_context",
+                "VDS runtime bağlamı AI kararından önce salt okunur olarak hazırlandı; operasyon aracı zorlanmadı.",
+                state="running",
+                tool="runtime_context",
+                target="vds://agent/runtime",
+                evidence_refs=[context_ref],
+                output_ref=context_ref,
+                next_action="AI ilk operasyonel adımı seçecek",
+            )
+            idle_rounds = 0
+            consecutive_no_tool_rounds = 0
+            while not self.stopped():
+                self._read_operator_directives()
+                self.step += 1
+                decision = self._decide()
+                if decision is None:
+                    idle_rounds += 1
+                    if idle_rounds >= 3:
+                        fallback_decision = self._autonomous_hunt_decision()
+                        if fallback_decision:
+                            self.emit(
+                                "autonomous_fallback_engaged",
+                                "AI sağlayıcısından geçerli araç kararı gelmedi; avın durmaması için deterministik avcı kararı devrede.",
+                                tool="autonomous_hunter",
+                                target="vds://agent/fallback",
+                                decision=fallback_decision.get("action"),
+                                hypothesis=self._text(fallback_decision.get("expected_value")),
+                                counter_hypothesis=self._first(fallback_decision.get("counter_evidence")),
+                                next_action="Deterministik araç yürütülecek",
+                                idle_rounds=idle_rounds,
+                            )
+                            decision = fallback_decision
+                    if decision is None:
                         self.emit(
-                            "autonomous_fallback_engaged",
-                            "AI sağlayıcısından geçerli araç kararı gelmedi; avın durmaması için deterministik avcı kararı devrede.",
-                            tool="autonomous_hunter",
-                            target="vds://agent/fallback",
-                            decision=fallback_decision.get("action"),
-                            hypothesis=self._text(fallback_decision.get("expected_value")),
-                            counter_hypothesis=self._first(fallback_decision.get("counter_evidence")),
-                            next_action="Deterministik araç yürütülecek",
+                            "reflection_waiting",
+                            "AI sağlayıcısından geçerli araç kararı gelmedi; sahte ilerleme üretmeden yeniden gözlem bekleniyor.",
+                            tool="ai_planner",
+                            target="vds://agent/decision",
+                            next_action="AI yeniden değerlendirilecek",
                             idle_rounds=idle_rounds,
                         )
-                        decision = fallback_decision
-                if decision is None:
-                    self.emit(
-                        "reflection_waiting",
-                        "AI sağlayıcısından geçerli araç kararı gelmedi; sahte ilerleme üretmeden yeniden gözlem bekleniyor.",
-                        tool="ai_planner",
-                        target="vds://agent/decision",
-                        next_action="AI yeniden değerlendirilecek",
-                        idle_rounds=idle_rounds,
-                    )
-                    time.sleep(min(15.0, 2.0 + idle_rounds))
-                    continue
-            idle_rounds = 0
-            tools = self._requested_tools(decision)
-            if not tools:
-                consecutive_no_tool_rounds += 1
-                if consecutive_no_tool_rounds >= 3:
-                    fallback_decision = self._autonomous_hunt_decision()
-                    if fallback_decision:
-                        fallback_tools = self._requested_tools(fallback_decision)
-                        if fallback_tools:
-                            tools = fallback_tools
-                            decision = fallback_decision
-                            consecutive_no_tool_rounds = 0
+                        time.sleep(min(15.0, 2.0 + idle_rounds))
+                        continue
+                idle_rounds = 0
+                tools = self._requested_tools(decision)
                 if not tools:
-                    self.emit(
-                        "decision_waiting",
-                        "AI bu turda araç seçmedi; gerekçe ve karşı kanıt görünür biçimde saklandı.",
-                        tool="ai_planner",
-                        target="vds://agent/decision",
-                        hypothesis=self._text(decision.get("expected_value")),
-                        counter_hypothesis=self._first(decision.get("counter_evidence")),
-                        evidence_refs=self._decision_evidence(decision),
-                        decision=decision.get("action"),
-                        next_action="Yeni gözlem veya AI araç kararı",
-                    )
-                    time.sleep(5.0)
-                    continue
-            consecutive_no_tool_rounds = 0
-            for tool_name, arguments in tools:
-                if self.stopped():
-                    break
-                self._invoke(tool_name, arguments)
-        self.emit(
-            "agent_stopping",
-            "AI runtime operatör sinyaliyle durdu.",
-            state="stopping",
-            tool="agent_runtime",
-            target="vds://agent",
-            operator_action="stop",
-            next_action="worker exit",
-        )
-        return 130
+                    consecutive_no_tool_rounds += 1
+                    if consecutive_no_tool_rounds >= 3:
+                        fallback_decision = self._autonomous_hunt_decision()
+                        if fallback_decision:
+                            fallback_tools = self._requested_tools(fallback_decision)
+                            if fallback_tools:
+                                tools = fallback_tools
+                                decision = fallback_decision
+                                consecutive_no_tool_rounds = 0
+                    if not tools:
+                        self.emit(
+                            "decision_waiting",
+                            "AI bu turda araç seçmedi; gerekçe ve karşı kanıt görünür biçimde saklandı.",
+                            tool="ai_planner",
+                            target="vds://agent/decision",
+                            hypothesis=self._text(decision.get("expected_value")),
+                            counter_hypothesis=self._first(decision.get("counter_evidence")),
+                            evidence_refs=self._decision_evidence(decision),
+                            decision=decision.get("action"),
+                            next_action="Yeni gözlem veya AI araç kararı",
+                        )
+                        time.sleep(5.0)
+                        continue
+                consecutive_no_tool_rounds = 0
+                for tool_name, arguments in tools:
+                    if self.stopped():
+                        break
+                    self._invoke(tool_name, arguments)
+            self.emit(
+                "agent_stopping",
+                "AI runtime operatör sinyaliyle durdu.",
+                state="stopping",
+                tool="agent_runtime",
+                target="vds://agent",
+                operator_action="stop",
+                next_action="worker exit",
+            )
+            return 130
+        finally:
+            self.screen_recorder.stop()
 
     def _autonomous_hunt_decision(self) -> dict[str, Any] | None:
         """Deterministic fallback when AI planner repeatedly fails or is unavailable.
@@ -1551,6 +1565,7 @@ class AgentRuntime:
             "recent_outcomes": self._outcome_records[-12:],
             "durable_evidence": self._evidence_summary(),
             "scanned_ledger_stats": self.ledger.get_stats(),
+            "dataset_summary": self.trajectory_logger.get_summary(),
             "previous_decision": {
                 "action": self.last_decision.get("action"),
                 "expected_value": self.last_decision.get("expected_value"),
@@ -2161,6 +2176,25 @@ class AgentRuntime:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._outcome_records.append(record)
         self._outcome_records = self._outcome_records[-40:]
+        try:
+            self.trajectory_logger.record_step(
+                step=self.step,
+                state={
+                    "phase": self._decision_phase,
+                    "open_ports_count": len(self._pending_open_ports()),
+                    "known_asns": list(self._fact_store.get("asn", set()))[:5],
+                    "known_cidrs": list(self._fact_store.get("cidrs", set()))[:5],
+                },
+                thought=str(self.last_decision.get("expected_value") or self.last_decision.get("action") or ""),
+                action={
+                    "tool": name,
+                    "arguments": _outcome_argument_summary(name, arguments),
+                },
+                pty_stdout=str(payload.get("working_note") or ""),
+                outcome=record,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to record step in trajectory_logger: {exc}")
         return record
 
     def _evidence_summary(self, sample: int = 25) -> dict[str, Any]:
