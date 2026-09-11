@@ -1,142 +1,174 @@
-# Otonom Avcı, Saha Verisi Hasadı ve C2 Mimarisi Şartnamesi
+# Otonom Avcı, 10 Yapı Taşı, Saha Verisi Hasadı ve C2 Mimarisi Şartnamesi
 
-## 1. Büyük Resim ve Hedef
+## 1. Büyük Resim ve Nihai Hedef
 
-Bu sistem yalnızca internetten rastgele proxy toplayan bir araç değildir. Sistem iki temel ve yüksek katma değerli varlık üretir:
+Bu sistem, interneti körü körüne tarayan bir port tarayıcı veya amatör bir scraper değildir. Sistem iki temel ve yüksek katma değerli çıktı üretmek üzere tasarlanmış **otonom bir siber istihbarat ve operasyon motorudur**:
 
 1. **Doğrulanmış, Satılabilir PaidProxy Havuzu:**
-   - Dışarıya çıkışı (egress IP), protokolü (HTTP CONNECT / SOCKS5), anonimliği ve gecikmesi nötr uç noktalardan teyit edilmiş vekil sunucular.
-2. **Saha Davranışı Veri Seti (Ground-Truth Agent Behavioral Dataset):**
-   - Bir otonom ajanın gerçek dünya işletim sisteminde (Linux / Sway / Terminal / Ağ Araçları) yaptığı her keşif, karar, hata, düzeltme ve terminal etkileşiminin; **zaman damgalı ekran kaydı (video/frame) + LLM düşünce/karar izi + OS girdi/çıktısı (PTY) + ağ paketleri** ile multimodal bir eğitim setine dönüştürülmesi.
-   - Bu veri; tescilli modellerin fine-tuning edilmesinde, ajanın kendi kendine öğrenmesinde (distillation/RL) ve operatörün kendi tersine mühendislik bilgi setini güçlendirmesinde kullanılır.
+   - Dışarıya çıkışı (egress IP), protokolü (HTTP CONNECT / SOCKS5), anonimliği ve gecikmesi nötr uç noktalardan teyit edilmiş, anında satılabilir/kullanılabilir vekil sunucular.
+2. **Saha Davranışı Veri Seti (Ground-Truth Multimodal Agent Dataset):**
+   - Otonom ajanın gerçek dünya işletim sisteminde (Linux / Sway / Terminal / Ağ Araçları) gerçekleştirdiği her keşif, karar, hata, düzeltme ve terminal etkileşiminin; **kesintisiz H.264 ekran kaydı (video) + LLM düşünce/karar izi + OS PTY terminal I/O + ağ paketleri** ile multimodal bir eğitim setine dönüştürülmesi.
+   - Bu veri; yerel modellerin fine-tuning edilmesinde (distillation/RL), ajanın kendi kendine öğrenmesinde ve operatörün kendi tersine mühendislik ve avcılık bilgi setini güçlendirmesinde kullanılır.
 
 ---
 
 ## 2. Hariç Tutulanlar (Non-Goals)
 
-- Körü körüne, rastgele `/24` subnetlerine 8 port sıkıp bekleyen "script-kiddie" kaba kuvvet (brute-force) taraması.
+- Körü körüne, rastgele `/24` subnetlerine 8 port sıkıp bekleyen "script-kiddie" kaba kuvvet (brute-force) ameleliği.
 - Tek bir IP üzerindeki sahte/firewall portlarında (ör. 3.105 port) saatlerce kilitlenip kalan senkron döngüler.
 - Canlı ekran akışını saniyede onlarca megabaytlık Base64 PNG stringleri olarak JSON IPC içine gömüp Tauri'yi ve ağı kilitlemek.
 - Proxy'leri Netflix, Google gibi hızla banlanan veya hedef odaklı platformlarda ilk doğrulamaya sokup false-negative üretmek.
+- Operatörün müdahalelerini (interventions) pasif bir JSON dosyasında unutup ajanın saatlerce eski ameleliğine devam etmesi.
 
 ---
 
-## 3. Mevcut Durum ve Kırılma Noktaları
+## 3. Sistemin 10 Temel Yapı Taşı (The 10 Invariant Building Blocks)
 
-| Bileşen | Mevcut Durum | Neden Kırıldı? |
-| :--- | :--- | :--- |
-| **Keşif Katmanı (Recon)** | Sadece 3 bayat IP ve kısıtlı RDAP/Masscan | İstihbarat sensörü (BGP, PTR, JARM) yok; LLM veri olmadan "götten sallamak" zorunda kaldı. |
-| **Port Doğrulama (Triage)** | `ai_runtime.py` içinde senkron `validate_proxy` çağrıları | Prompttaki katı kural yüzünden tek bir modemdeki 3.105 sahte porta tek tek 7 sn harcandı (6 saat kilitlendi). |
-| **Görselleştirme (Cockpit)** | Sway -> `grim` (PNG) -> Base64 -> JSON -> Tauri IPC | Her saniye megabaytlarca JSON üretildi; arayüz dondu, operatör müdahaleleri (interventions) kayboldu. |
-| **Saha Verisi Kaydı** | Parçalı PNG ekran görüntüleri ve şişen `events.jsonl` | Düzenli video (H.264), multimodal eğitim verisi ve aksiyon-gözlem zinciri halinde paketlenmedi. |
+Bu 10 yapı taşı sistemin omurgasıdır; biri bile eksik veya statik şablonlarla kısıtlanmış olamaz.
 
----
+```
+[1. Keşif: myip.ms/RIPEstat/BGP] ──► [2. Kriter & Öncelik Hiyerarşisi] ──► [3. Değerli/Değersiz Analizi]
+                                                                                      │
+[6. Masscan Hız/Timeout] ◄── [5. Kokuya Göre Diş/İlk Port] ◄── [4. Dinamik Range & Pilot Isırık]
+           │
+           ▼
+[7. Port Genleme & L7 Teyit] ──► [8. Bloklar Arası Geçiş/Sıkılma] ──► [9. Özdenetim & Pes Etmeme]
+                                                                                      │
+                                                                                      ▼
+                                                                        [10. Mükerrer Engeli (Ledger)]
+```
 
-## 4. İstenen Mimari (4 Temel Sütun)
+### Yapı Taşı 1: Hedef Keşfi (Reconnaissance & Discovery)
+- **Veri Kaynakları:** `myip.ms` (unmanaged VPS, reseller hosting, colocation, bağımsız yerel ISP'ler) + `stat.ripe.net` / `bgp.he.net` (BGP anonsları, upstream AS'ler).
+- **Koku Tetikleyicileri:** WHOIS ve ASN metinlerinde geçen *"cache, proxy, squid, transit, dynamic, pool, broadband, pppoe"* anahtar kelimeleri doğrudan av kokusudur.
+- **Saha İstihbarat Kartı:** Ajan tek bir IP ile değil; sağlayıcının kimliği, altyapı türü, anons ettiği tüm prefix'ler ve komşuluk ilişkileriyle tam bir istihbarat kartı oluşturur.
 
-### Sütun I: Keşif & İstihbarat Katmanı (Grounded Reconnaissance)
-LLM'in görevi rastgele tahmin yürütmek değil; gerçek dünya telemetrisinden **örüntü yakalamak ve nokta atışı hipotez kurmaktır**.
+### Yapı Taşı 2: Kriterler ve Öncelik Hiyerarşisi
+Hedefler kâr/maliyet ve yaşama ömrü dengesine göre 3 katı kademede önceliklendirilir:
+1. **Öncelik 1 (En Yüksek Getiri / Hızlı Kovan):** Unmanaged, güncellenmeyen ucuz hosting / VPS sağlayıcıları. Unutulmuş Squid/3proxy kovanları barındırma ihtimali yüksektir; tek vuruşta toplu proxy çıkarır.
+2. **Öncelik 2 (Uzun Yaşama Ömrü):** Küçük kurumsal ISP'ler ve statik tahsisli forward vekiller. Banlanma riski çok düşüktür, haftalarca ayakta kalır.
+3. **Öncelik 3 (Piyasa Değeri En Yüksek):** 4G/5G ve residential dinamik ISP havuzları (CGNAT/PPPoE).
+- Ajan önceliği yüksek koku varken gidip düşük getirili veya ölü zeminlere bakamaz.
 
-1. **İstihbarat Sensörleri (Recon Tools):**
-   - `recon_bgp_context(asn)`: Hedef ASN'in anons ettiği prefix'leri, upstream sağlayıcılarını ve komşu AS'leri çeker (`stat.ripe.net`, `bgp.he.net`).
-   - `recon_ptr_patterns(cidr)`: Hedef bloktaki ters DNS (PTR) kalıplarını örnekler (`pool-*.datacenter.com`, `dyn-*.isp.net`, `gateway-*`).
-   - `recon_cert_jarm(host, port)`: Karşı tarafın TLS el sıkışma parmak izini (JARM/JA3) ve SSL Subject/SAN alanlarını çıkarır (Squid, Envoy, 3proxy imzaları).
-2. **Gerekçeli Hipotez Protokolü:**
-   - Ajan Masscan çalıştırmadan önce şu kontratı üretmek zorundadır:
-     ```json
-     {
-       "target_cidr": "x.x.x.0/24",
-       "intelligence_source": "PTR naming pattern shows dedicated proxy egress pool",
-       "hypothesis": "Bu blokta HTTP CONNECT proxy kümesi barınıyor",
-       "selected_initial_ports": [8000, 8080, 10000],
-       "rationale": "Veri merkezi BGP anonsu ve PTR kayıtları Squid kümesine işaret ediyor"
-     }
-     ```
+### Yapı Taşı 3: Değerli / Değersiz Hedef Kararı (Risk ve Yaratıcılık)
+- **Ölü Zemin (Kesinlikle Yasak):** Cloudflare (AS13335), Google (AS15169), Microsoft Azure, AWS kurumsal CDN'leri, bankacılık ve savunma sistemleri. Buralarda açık vekil avı yoktur.
+- **Değerli Zemin (Kan Kokusu):** Unmanaged reseller hostingler, ev cihazlarında açık bırakılmış portlar, unutulmuş colo merkezleri.
+- **En Değerli Kural (Kardeş Damar):** Son isabet alınan IP'nin ait olduğu ASN ve komşu bloklar soğuk bir ASN'den daima katbekat önceliklidir.
+- **Risk Alma:** Ajan bilinen kalıpların dışındaki egzotik ISP'leri (ör. Doğu Avrupa, Güneydoğu Asya yerel sağlayıcıları) denemekten çekinmez.
 
-### Sütun II: Asenkron Port Genleme & Hızlı Triage Motoru
-Tekil port doğrulaması LLM'in işi değildir; bu görev makinenin asenkron soket motoruna aittir.
+### Yapı Taşı 4: Dinamik Range Seçimi (Asla Statik /24 Yok!)
+- Sağlayıcının anons ettiği range `/18`, `/20`, `/21` veya birden fazla `/24` olabilir. Ajan hiçbir zaman yapay bir `/24` sınırına hapsedilemez.
+- **Pilot Isırık (Sampling):** Devasa bir bloğa tek seferde körü körüne girilmez. Bloğun içinden küçük bir örneklem dilimi (pilot) seçilerek kokuya uygun ilk dişle ısırılır.
+- **Genişleme Kararı:**
+  - Pilot ısırıkta canlılık (SYN-ACK) gelirse: O range "damar" kabul edilir ve range'in tamamına dikey/yatay olarak yayılınır.
+  - Pilot ısırık tamamen karanlıksa: O range derhal terk edilir, sağlayıcının diğer prefix'ine geçilir.
 
-1. **1000 Eşzamanlı Asenkron Triage (`asyncio` / `epoll`):**
-   - Masscan'den ister 10, ister 3.105 açık port dönsün; portlar havuza atılır ve tek bir event loop ile taranır.
-   - Her porta paralel olarak 300 ms zaman aşımlı **L7 protokol sondası** gönderilir:
-     - HTTP Probe: `CONNECT 1.1.1.1:443 HTTP/1.1\r\nHost: 1.1.1.1:443\r\n\r\n`
-     - SOCKS5 Probe: `\x05\x01\x00`
-   - Firewall'lar, tarpit'ler ve sahte açık portlar 300 ms içinde elenir. 3.000 portluk sahte liste **1.5 saniye içinde** 2-3 gerçek servis portuna indirgenir ("genlenir").
-2. **Nötr Egress Doğrulama:**
-   - Ayıklanan portlar anında nötr ve ban riski olmayan hedeflerden test edilir:
-     - `https://1.1.1.1/cdn-cgi/trace` (Cloudflare CDN egress)
-     - `https://api.ipify.org?format=json`
-     - Özel düşük gecikmeli VDS reflect endpoint'i.
-   - Dış IP (egress IP) doğrulanır doğrulanmaz proxy anında `var/proxies/live_proxies.jsonl`'e yazılır.
+### Yapı Taşı 5: Kokuya Göre Diş (İlk Port) Seçimi
+`hunter-soul` kuralı: *"Türün dişini seçer, tüm ağız birden değil."*
+- **Hosting / VPS Kokusu:** İlk diş `3128` (Squid), `8080`, `3129`.
+- **Residential / Modem / CPE Kokusu:** İlk diş `1080` (SOCKS5), `7777` (residential gateway), `7000`, `823`, `6060`.
+- **Ticari Proxy Ağı Kokusu:** `10000`, `12323`, `8000`.
+- Asla aynı anda 65.535 portla kör dövüşü yapılmaz. Hedefin kimliğine uyan **tek bir ilk portla** kapı tıklatılır. Kapı açılırsa diğer olası portlara geçilir.
 
-### Sütun III: Saha Verisi & Multimodal Davranış Kaydı Motoru
-Bu sistemin "kara kutusu" ve değer üreten veri fabrikasıdır.
+### Yapı Taşı 6: Masscan Hız ve Timeout Fiziği (`docs/masscan-hiz-ve-timeout.md`)
+VDS üzerindeki fiziksel ölçüm sonuçları kanundur:
+1. **Timeout Güvenli Tabanı:**
+   - 0.5s timeout gerçek açık portları düşürür (yanlış negatif).
+   - **Kural: `timeout >= 1.0s` (tercihen 1.5s), her porta 2 deneme.**
+2. **Dinamik Rate (pps) ve Wait:**
+   - Tek IP veya küçük blok: `--rate 5000 --wait 3`.
+   - Geniş CIDR blokları (/18, /16): Upstream router'da paket drop yememek için `--rate 2500-4000 --wait 3`.
+3. **Socket Teyidi:** Masscan yalnızca L4 SYN canlılığıdır; dönen portlar mutlaka soket el sıkışmasıyla teyit edilir.
 
-1. **Kesintisiz Headless Arka Plan Kaydı (Continuous VDS Capture):**
-   - VDS üzerinde `wf-recorder` (veya hafif H.264 pipe) ile Sway ekranı kesintisiz olarak 720p / 1080p, 15 FPS hızında `.mp4` olarak diske yazılır (`var/recordings/{agent_id}/screen.mp4`).
-   - Saniyede 15 adet PNG üretmek yerine H.264 donanım/yazılım sıkıştırması kullanılarak disk yükü 100 kat azaltılır.
-2. **State-Action-Reward Veri Eşlemesi:**
-   - Her ajanın yaşam döngüsü şu veri yapısıyla kaydedilir:
-     ```json
-     {
-       "timestamp": "2026-09-12T00:15:00.000Z",
-       "video_frame_timestamp_ms": 124500,
-       "prompt_context": "... (ajanın gördüğü istihbarat)",
-       "llm_thought": "... (ajanın kurduğu hipotez)",
-       "action_taken": "async_probe_range",
-       "os_pty_output": "... (terminal çıktısı)",
-       "outcome": {"egress_confirmed": true, "proxy": "x.x.x.x:8080"},
-       "reward_score": 1.0
-     }
-     ```
-   - Bu veri seti, gelecekteki lokal modelleri (Llama-3, DeepSeek, Mistral) fine-tuning ederek frontier modellerden daha uzman bir siber avcı haline getirmek için hazır tutulur.
+### Yapı Taşı 7: Port Genleme ve Maksimum Proxy Damıtımı
+- Masscan çıktısında ardışık veya blok portlar (ör. `10000-10050` veya `8000-8020` sticky aralıkları) görüldüğünde, sistem bunu bir "proxy kovanı" olarak tanımlar ("genleme").
+- **1000 Eşzamanlı Asenkron L7 Sondası:** Bu portların tamamına tek bir event loop içinde 300-500ms zaman aşımlı HTTP CONNECT ve SOCKS5 el sıkışma paketleri fırlatılır.
+- Kovan içindeki çalışan her port tek tek L7 teyidinden geçirilerek kasaya aktarılır; tek bir açık uçtan onlarca çalışan proxy elde edilir.
 
-### Sütun IV: Cockpit & Ayrık Komuta Kontrol (C2) Protokolü
-Ekran izleme ile komuta kontrol kanalı birbirinden kesin çizgilerle ayrılır.
+### Yapı Taşı 8: Bloklar Arası Geçiş ve Sıkılma Kuralı
+- **Ölü Blok:** Hiç SYN-ACK dönmüyorsa range derhal terk edilir.
+- **Canlı Ama Servis Portu:** (Ör. ASN 209207 tecrübesi: 88 açık uç çıktı ama hepsi web sunucusu / 407 auth verdi).
+  - Ajan anlar: *"Bu blok web hosting ağırlıklı, açık vekil yok."*
+  - Aynı blokta ısrar edilmez; sağlayıcının ASN'i değiştirilir veya residential kokuya geçilir.
 
-1. **Ekran Akışının Ayrıştırılması (On-Demand Stream):**
-   - Ekran görüntüsü Base64 JSON üzerinden TAŞINMAZ.
-   - VDS'teki `wayvnc` (5900) önüne hafif bir `websockify` yerleştirilir. Cockpit içinde `noVNC` bileşeni kullanılır.
-   - Operatör Cockpit'te "Ekran / VDS Görünümü" sekmesine geçtiği anda RFB WebSocket bağlantısı açılır; pencereler kapandığında veya başka sekmeye geçildiğinde akış durur. Sıfır JSON IPC yükü, sıfır ağ şişmesi.
-2. **Hafif Telemetri & PTY Akışı (Ana Dashboard):**
-   - Ana ekranda canlı ekran yerine:
-     - Gerçek zamanlı keşif grafiği (Bulunan ASN'ler, hedefler, canlı portlar).
-     - Canlı proxy akışı (Yakalanan ve doğrulanmış vekiller anında düşer).
-     - Canlı terminal akışı (`xterm.js` over WebSocket).
-3. **Öncelikli Operatör Müdahalesi (Preemptive Interruption):**
-   - Operatör bir direktif verdiğinde ("DUR", "HEDEFE ATLA", "BU ASN'İ GEÇ"), bu mesaj pasif bir JSON dosyasına yazılmaz.
-   - Ajanın ana döngüsüne bir `asyncio.Event` / Cancellation Token sinyali gönderilir; ajan o anki soket ameleliğini derhal iptal eder ve operatörün emrini işleme alır.
+### Yapı Taşı 9: Özdenetim, Kesintisiz Döngü ve Pes Etmeme
+- Bir sağlayıcının tüm range'leri bittiğinde ve sıfır proxy çıktığında ajan:
+  1. **Özdenetim Yapar:** Masscan çöktü mü? Ağda drop oldu mu? Teknik bir arıza yoksa sorun hedefin kısırlığıdır.
+  2. **Döngüyü Kesintisiz Döndürür:** Durmaz, pes etmez. Hafızasına bu ASN'in kısırlığını kaydeder ve `myip.ms` havuzundaki bir sonraki taze hedefe geçer. Çalışan proxy elde edilene kadar bu döngü durmaksızın akar.
+
+### Yapı Taşı 10: Mükerrer (Duplicate) Tarama Yasağı
+- Taranan her ASN, CIDR ve port kombinasyonu kalıcı **Av Defteri Muhasebesine (Ledger)** yazılır.
+- Aynı hedefin aynı range'ine yalnızca iki durumda geri dönülür:
+  1. Sağlayıcı BGP'ye yeni bir prefix (yeni IP bloğu) anons ettiğinde.
+  2. Operatör av defterine yeni bir koku/port eklediğinde.
+- Bunun haricinde aynı aralık asla mükerrer taranmaz.
 
 ---
 
-## 5. Yapılacaklar Listesi (Uygulama Fazları)
+## 4. Desktop Cockpit'in Gerçek Fonksiyonel Rolü (C2 Masası)
 
-### Faz 1: Asenkron Port Triage & Egress Doğrulama Motoru (Acil / P0)
-- [ ] `services/agentd/fast_triage.py`: 1000 eşzamanlı soket ile HTTP CONNECT ve SOCKS5 el sıkışma sondasını koşturan asenkron motorun yazılması.
-- [ ] `ai_runtime.py` içindeki tekil ve senkron `validate_proxy` zorunluluğunun kaldırılması; açık portların toplu olarak `fast_triage` motoruna devredilmesi.
-- [ ] Nötr egress doğrulayıcısının (`1.1.1.1/cdn-cgi/trace` ve yedek endpoint'ler) entegre edilmesi ve bulunan proxy'lerin anında `var/proxies/live_proxies.jsonl`'e basılması.
+Masaüstü uygulaması bir "resim görüntüleyici" değildir; bu 10 yapı taşını yöneten ve gösteren **Canlı Komuta Kontrol (C2) Merkezidir**.
 
-### Faz 2: İstihbarat & Keşif Sensörleri (Grounded Recon) (P1)
-- [ ] `services/agentd/recon.py`: BGP prefix sorguları (`stat.ripe.net`), PTR desen analizcisi ve RDAP hata toleranslı veri çekici.
-- [ ] Ajan karar motoruna (`_hunter_instruction`) gerekçeli hipotez kontratının eklenmesi; LLM'in körü körüne tekil IP'lere saplanmasının engellenmesi.
-- [ ] Operatörün `config/hunt/av-defteri.txt` sezgilerinin LLM'in karar anına dinamik olarak beslenmesi.
+### A. Telemetri ve HUD (Canlı Görünüm)
+1. **Hedef & Koku Paneli:** Ajanın o an hangi ASN'e baktığı, hangi BGP prefix'ini seçtiği, kokunun gerekçesi ve öncelik seviyesi.
+2. **Tarama & Genleme HUD:** Seçilen range, uygulanan masscan hızı (pps/wait), bulunan açık portlar ve genlenen aralıklar.
+3. **Canlı Kasa:** Egress doğrulaması geçen proxy'ler milisaniyesinde yeşil olarak ekrana düşer (`IP:Port - Egress IP - Latency`).
+4. **Canlı PTY Akışı:** Ajanın düşündüğü, attığı komutlar ve terminal çıktısı ANSI renkleriyle canlı akar (`xterm.js`).
 
-### Faz 3: Saha Verisi & Arka Plan Kayıt Motoru (P1)
-- [ ] VDS tarafında Sway ekranını kesintisiz H.264 olarak kaydeden ve olaylarla (events) eşleştiren `recorder_daemon.py` servisinin yapılandırılması.
-- [ ] Karar anı (LLM JSON) + Terminal I/O + Ekran zaman damgası eşleştirmesini yapan veri derleyicisinin oluşturulması (`var/datasets/agent_trajectories/`).
+### B. Kesintisiz Video vs İsteğe Bağlı Ekran Ayrımı (Decoupling)
+- **VDS Tarafı (Her Zaman Açık):** `wf-recorder` Sway masaüstünü 720p/15fps H.264 MP4 olarak kesintisiz kaydeder (`var/recordings/{agent_id}/screen.mp4`). Sıfır ağ harcar, diski şişirmez.
+- **Cockpit Tarafı (İsteğe Bağlı):** Operatör sadece "VDS Canlı Ekran" sekmesini açtığında, VDS'teki `wayvnc` -> `websockify` üzerinden doğrudan native noVNC (WebSocket) açılır. Sekme kapandığında ağ akışı sıfırlanır. Araya asla Base64 JSON girmez.
 
-### Faz 4: Cockpit C2 & noVNC Ayrıştırması (P2)
-- [ ] VDS'te `wayvnc` -> `websockify` köprüsünün açılması.
-- [ ] Cockpit (Tauri/Vite) arayüzündeki Base64 JSON polling mantığının temizlenmesi; yerine isteğe bağlı açılan `noVNC` sekmesinin ve `xterm.js` canlı PTY konsolunun yerleştirilmesi.
-- [ ] Preemptive operatör müdahale sinyalinin (Unix socket / WebSocket interrupt) bağlanması.
+### C. Öncelikli Müdahale (Preemptive Interrupt)
+- Operatör Cockpit'ten "DUR", "BU BLOĞU GEÇ", "ŞU ASN'E ATLA" dediğinde; mesaj pasif bir JSON'a yazılmaz.
+- Ajanın sürecine anında bir `CancelToken` sinyali ulaşır; ajan mevcut soket ameleliğini o salisede keser ve yeni emre döner.
 
 ---
 
-## 6. Gelecek Ufukları (Yapılabilecekler & İleri Seviye)
+## 5. Saha Verisi Hasadı (Multimodal Dataset Fabrikası)
 
-1. **Özel RL / SL Fine-Tuning Pipeline:**
-   - Toplanan yüz binlerce adımdan oluşan saha verisiyle, ağ keşfi ve proxy sızması konusunda uzmanlaşmış 7B/14B parametreli yerel bir model eğitmek (API maliyetini sıfıra indirmek).
-2. **Kendi Kendini İyileştiren Avcı Sürüsü (Swarm Intelligence):**
-   - Birden fazla VDS'teki ajanların keşfettiği koku ve ASN istihbaratını ortak bir vektör bellekte (Vector DB / Knowledge Graph) paylaşarak birbirini beslemesi.
-3. **Gerçek Zamanlı Proxy Satış API'si:**
-   - `live_proxies.jsonl` dosyasına düşen vekillerin anında bir auth gateway'i (ör. 3proxy / Envoy) arkasına alınıp müşterilere API anahtarıyla otomatik rotasyonlu olarak kiralanması.
+Ajanın her adımı, gelecekteki modelleri fine-tune etmek üzere yapılandırılmış bir **State-Action-Reward** zinciri olarak saklanır:
+
+```json
+{
+  "timestamp": "2026-09-12T00:30:00.000Z",
+  "agent_id": "ajan-xxxx",
+  "video_timecode_ms": 45210,
+  "state": {
+    "target_asn": "AS209207",
+    "target_cidr": "138.124.79.0/24",
+    "intelligence_source": "myip.ms unmanaged vps",
+    "pilot_result": "SYN-ACK on port 10000"
+  },
+  "llm_thought": "Pilot ısırıkta 10000 portu yanıt verdi. Kovan ihtimali yüksek, 10000-10050 aralığını genleyip asenkron L7'ye veriyorum.",
+  "action": {
+    "tool": "fast_triage_range",
+    "ports": [10000, 10001, 10002, 10003]
+  },
+  "terminal_pty_stdout": "... [L7 PROBE] 138.124.79.160:10000 -> HTTP CONNECT 200 OK ...",
+  "outcome": {
+    "egress_confirmed": true,
+    "exit_ip": "138.124.79.160",
+    "latency_ms": 142
+  },
+  "reward": 1.0
+}
+```
+
+---
+
+## 6. Uygulama Adımları ve Doğrulama Kriterleri
+
+1. **`services/agentd/fast_triage.py`:**
+   - 1000 eşzamanlı soket, `timeout >= 1.0s`, HTTP CONNECT ve SOCKS5 el sıkışması, `1.1.1.1/cdn-cgi/trace` nötr egress kontrolü.
+   - Doğrulama: Sahte 3.000 portluk senaryoda 1.5 saniyede triage testi.
+2. **`services/agentd/recon.py`:**
+   - BGP prefix çekimi (RIPEstat), PTR desen analizi, ASN komşulukları.
+   - Doğrulama: `AS209207` sorgulandığında tüm anons edilen CIDR'ların doğru listelenmesi.
+3. **`services/agentd/ai_runtime.py` Entegrasyonu:**
+   - Sabit `/24` ve senkron tekil port prangasının kaldırılması.
+   - Karar motoruna bu 10 yapı taşını zorunlu kılan operasyonel kontratın bağlanması.
+4. **`services/agentd/dataset_recorder.py`:**
+   - Sway ekranının `wf-recorder` ile H.264 MP4 olarak arka planda kaydedilmesi ve telemetri JSONL ile senkronlanması.
+5. **Cockpit C2 & noVNC:**
+   - Tauri içinde Base64 polling yerine doğrudan noVNC sekmesi ve anlık iptal (interrupt) sinyalinin bağlanması.
