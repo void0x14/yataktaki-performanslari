@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import platform
@@ -27,9 +28,32 @@ from urllib.request import Request, urlopen
 
 from proxy_pipeline.tarama_plani import bant_listesi
 from services.agentd.fast_triage import FastTriageEngine, run_fast_triage
-from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
+from services.agentd.recon import fetch_network_info, classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
 from services.agentd.scanned_ledger import ScannedLedger
 from services.agentd.dataset_recorder import ScreenRecorder, TrajectoryLogger
+
+logger = logging.getLogger("agentd.ai_runtime")
+
+_PLACEHOLDER_ARGUMENT_RE = re.compile(r"__[A-Za-z0-9_.\[\] ]+__|\{\{[^}]{1,80}\}\}|\$\{[^}]{1,80}\}")
+
+
+def _placeholder_argument(arguments: dict[str, Any]) -> str:
+    """Planner dependency placeholders (e.g. __FROM_x__) are never executable values."""
+    for key, value in arguments.items():
+        if isinstance(value, str) and _PLACEHOLDER_ARGUMENT_RE.search(value):
+            return f"{key}={value[:60]}"
+    return ""
+
+
+def _contains_from_placeholder(value: Any) -> bool:
+    """Planner __FROM_...__ bağımlılık yer tutucularını iç içe yapılarda da yakala."""
+    if isinstance(value, str):
+        return "__FROM_" in value.upper()
+    if isinstance(value, dict):
+        return any(_contains_from_placeholder(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_from_placeholder(item) for item in value)
+    return False
 
 
 _CLAUDE_PLANNER_TIMEOUT = 240
@@ -659,6 +683,8 @@ def validate_tool_arguments(name: str, arguments: Any) -> dict[str, Any]:
         raise ValueError(f"tool not registered: {name}")
     if not isinstance(arguments, dict):
         raise ValueError("tool arguments dict olmalı")
+    if any(_contains_from_placeholder(value) for value in arguments.values()):
+        raise ValueError("placeholder argüman ertelendi: önce kaynak araç çalışmalı")
     result = dict(arguments)
 
     if name == "observe_vds_surface":
@@ -1597,6 +1623,8 @@ class AgentRuntime:
                 "available_tools içindeki arguments kontratını eksiksiz karşılamalıdır. "
                 "browse_public_source.url mutlak http:// veya https:// URL olmalı ve katalogdaki source_examples/allowed_hosts içinden seçilmelidir. "
                 "Kontratı karşılayamıyorsan aracı isteme. Kanıt ve karşı kanıtı ayır. "
+                "Argüman değerlerinde yer tutucu/bağımlılık simgesi kullanma (__FROM_..., {{...}}, ${...}); yalnız snapshot'taki gerçek değerleri yaz. Bağımlı iki adımı sırayla iste: önce ön koşul aracını çağır, sonucu snapshot.recent_outcomes içinde görünce bağımlı aracı gerçek değerle çağır. "
+                "Kendi VDS IP'n ve onu barındıran sağlayıcı ölü zemindir (Microsoft/Azure, Cloudflare, Google, Amazon, Akamai); orada av yok, o ASN'i tarama. İlk koku gerçek av yüzeyinden gelir: myip.ms unmanaged/reseller/colo listeleri ve yabancı küçük ASN'ler. "
                 "L4 canlılık ile L7 gerçek-site "
                 "çıkışını karıştırma. Masscan yalnız ilk canlılık içindir; canlı IP'de "
                 "dikey genişleme için expand_live_ip socket aracını seç. "
@@ -1770,6 +1798,12 @@ class AgentRuntime:
                     else:
                         arguments["ip"] = value
                     arguments.pop(raw_key, None)
+            placeholder = _placeholder_argument(arguments)
+            if placeholder:
+                provenance_deferred.append(
+                    f"{name}: bağımlı argüman yer tutucusu ({placeholder}) — önce ön koşul aracı çalışmalı"
+                )
+                continue
             try:
                 normalized = validate_tool_arguments(name, arguments)
             except (TypeError, ValueError) as exc:
@@ -3051,14 +3085,26 @@ class AgentRuntime:
     def _recon_bgp_tool(self, args: dict[str, Any]) -> dict[str, Any]:
         asn = str(args.get("asn") or "").strip()
         ip = str(args.get("ip") or "").strip()
+        org = str(args.get("org") or "").strip()
         if not asn and ip:
             ctx = self._inspect_owner_context({"ip": ip})
             asn = str(ctx.get("asn") or "")
+            org = org or str(ctx.get("org") or "")
+        if not asn and ip:
+            info = fetch_network_info(ip)
+            if info.get("asn"):
+                asn = f"AS{info['asn']}"
+            org = org or str(info.get("holder") or "")
         if not asn:
-            raise ValueError("recon_bgp için geçerli bir ASN veya IP gerekli")
-        plan = plan_grounded_hunt(asn, str(args.get("org") or "Unknown Org"))
+            raise ValueError("recon_bgp için ASN çözülemedi: RDAP/RIPEstat yanıtı boş")
+        plan = plan_grounded_hunt(asn, org or "Unknown Org")
+        working = f"{asn} için BGP ve hedef istihbarat planı hazırlandı. Pilot dilim: {plan.get('pilot_prefix')}."
+        if not plan.get("is_targetable"):
+            working = f"{asn} hedef dışı: {plan.get('reason') or plan.get('classification', {}).get('rationale', '')}"
         return {
-            "working_note": f"{asn} için BGP ve hedef istihbarat planı hazırlandı. Pilot dilim: {plan.get('pilot_prefix')}.",
+            "working_note": working,
+            "asn": asn,
+            "org": org,
             "recon_plan": plan,
         }
 
