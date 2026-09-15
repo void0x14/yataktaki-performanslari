@@ -545,6 +545,52 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             raise RuntimeError(str(vision["error"]))
         dom = _json(await extract())
         dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+        if _is_human_verification("", dom_text):
+            # OPERATOR ORDER: kahin's own tools clear the myip.ms wall.
+            # captcha.php resmini Vision OCR'ye gönder, çıkan metni kutuya yaz,
+            # gönder düğmesine bas. Yerleşik pilot/mirage araçları; elle JS yok.
+            from kahin.tools.pilot_mirage import mirage_click, mirage_get_attribute, mirage_type
+
+            img_src = ""
+            attr = _json(await mirage_get_attribute(selector="img[src*='captcha.php']", name="src"))
+            img_src = str(attr.get("value") or "")
+            if img_src:
+                captcha_url = img_src if img_src.startswith("http") else "https://myip.ms" + ("/" + img_src.lstrip("/") if not img_src.startswith("/") else img_src)
+                await navigate(url=captcha_url, wait_until="load", timeout=30.0)
+                cap_shot = await state._current_engine.screenshot(full_page=False)
+                cap_tmp = ""
+                answer = ""
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as cap_file:
+                        cap_file.write(bytes(cap_shot))
+                        cap_tmp = cap_file.name
+                    cap_vision = _json(await ocr(image=cap_tmp))
+                    for key in ("text", "fullText", "description"):
+                        blob = str(cap_vision.get(key) or "")
+                        if blob:
+                            answer = re.sub(r"[^A-Za-z0-9]", "", blob)
+                            break
+                finally:
+                    if cap_tmp:
+                        Path(cap_tmp).unlink(missing_ok=True)
+                if answer:
+                    await navigate(url=target_url, wait_until="domcontentloaded", timeout=30.0)
+                    await mirage_type(selector="#p_captcha_response", text=answer)
+                    await mirage_click(selector="#captcha_submit")
+                    await asyncio.sleep(3.0)
+                    try:
+                        screenshot_bytes = await state._current_engine.screenshot(full_page=True)
+                    except Exception:
+                        pass
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temporary:
+                        temporary.write(bytes(screenshot_bytes))
+                        retry_tmp = temporary.name
+                    try:
+                        vision = _json(await ocr(image=retry_tmp))
+                    finally:
+                        Path(retry_tmp).unlink(missing_ok=True)
+                    dom = _json(await extract())
+                    dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
         discovery: dict[str, Any] = {}
         try:
             discovery = _discover_targets(_evaluate_value(await evaluate(_DISCOVERY_JS)))
