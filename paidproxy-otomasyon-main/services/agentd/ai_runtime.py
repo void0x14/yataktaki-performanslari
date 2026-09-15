@@ -505,20 +505,11 @@ def _public_source_facts(body: str) -> dict[str, list[Any]]:
 
 
 def _hunt_notebook_hint() -> str:
-    """Operator hunt notebook as prose, so the model actually uses the scent."""
-    notebook = _read_hunt_notebook()
-    ports = notebook.get("ports") or []
-    bands = notebook.get("bands") or []
-    if not ports and not bands:
-        return ""
-    port_text = ", ".join(str(port) for port in ports)
-    band_text = ", ".join(str(band) for band in bands)
+    """Operator order: every port is scanned. No static port list."""
     return (
-        f" Operatör av defteri: ürün-spesifik vekil portları [{port_text}]"
-        + (f", sticky bantları [{band_text}]" if band_text else "")
-        + ". 3128/1080 tek başına script-kiddie mezarlığıdır; ilk diş için bu "
-        "ürün portlarını öncelikle düşün (1080/3128 son çare), canlı IP çıkınca "
-        "port_scan_live_ip ile TÜM portlarını çıkar."
+        " OPERATÖR EMRİ: HER PORT taranır. Statik port listesi YOK; masscan ilk "
+        "canlılıkta 1-65535 TAM aralık kullanır, canlı IP çıkınca "
+        "port_scan_live_ip ile TÜM portları çıkarılır. Daraltma yasak."
     )
 
 
@@ -896,8 +887,7 @@ class ToolCatalog:
                 "arguments": dict(spec.argument_contract),
             }
             if spec.name in {"masscan_liveness", "expand_live_ip"}:
-                item["allowed_port_source"] = "var/port-araliklari/yuksek.txt"
-                item["allowed_port_ranges"] = _allowed_port_bands()
+                item["port_policy"] = "operator-order-full-range: 1-65535"
             if spec.name == "browse_public_source":
                 item["allowed_hosts"] = list(_AV_SOURCE_HOSTS)
                 item["source_examples"] = list(_AV_SOURCE_EXAMPLES)
@@ -1359,19 +1349,8 @@ class AgentRuntime:
         }
 
     def _priority_hunt_ports(self) -> list[int]:
-        """Operator product ports first, legacy script-kiddie ports last.
-
-        The model repeatedly chose 1080/3128 even with the notebook in front of
-        it, so priority is enforced deterministically instead of suggested.
-        """
-        notebook = self._hunt_notebook()
-        operator_ports = [int(port) for port in (notebook.get("ports") or [])]
-        legacy = [1080, 3128, 8080, 8888, 8118, 80, 443]
-        ordered: list[int] = []
-        for port in operator_ports + legacy:
-            if port not in ordered:
-                ordered.append(port)
-        return ordered
+        """Operator order: no static port priority. Full range only."""
+        return []
 
     def _hunt_notebook(self) -> dict[str, Any]:
         return _read_hunt_notebook()
@@ -1580,7 +1559,6 @@ class AgentRuntime:
         cidrs = sorted(self._fact_store.get("cidrs") or set())
         if cidrs:
             target_cidr = cidrs[0]
-            ports = self._priority_hunt_ports()
             return {
                 "action": "sample",
                 "requested_tools": ["masscan_liveness"],
@@ -1588,12 +1566,12 @@ class AgentRuntime:
                     "tool_arguments": {
                         "masscan_liveness": {
                             "cidr": str(target_cidr),
-                            "ports": ports[:12],
+                            "port_spec": "1-65535",
                             "rate": 5000,
                         }
                     }
                 },
-                "expected_value": f"Deterministik otonom: {target_cidr} CIDR için ürün portlarında canlılık taranıyor.",
+                "expected_value": f"Deterministik otonom: {target_cidr} CIDR için TAM port aralığında (1-65535) canlılık taranıyor.",
                 "counter_evidence": ["AI planlayıcı yanıt vermedi; bilinen CIDR havuzunda canlılık aranıyor."],
                 "provider": "autonomous-hunter",
                 "model": "deterministic-v1",
@@ -2564,6 +2542,17 @@ class AgentRuntime:
     def _masscan_liveness(self, args: dict[str, Any]) -> dict[str, Any]:
         cidr = str(args.get("cidr", "")).strip()
         ipaddress.ip_network(cidr, strict=False)
+        # DUP KAPISI: bu CIDR tam-port tarandıysa tekrar tarama yok.
+        if self.ledger.is_scanned(cidr, 0):
+            return {
+                "working_note": f"DUP REDDİ: {cidr} zaten tam-port tarandı; ledger atlandı.",
+                "cidr": cidr,
+                "port_spec": "1-65535",
+                "discovered": [],
+                "duplicate_skipped": True,
+                "evidence_refs": [],
+                "next_action": "yeni CIDR seç; aynı kapıya vurma",
+            }
         port_spec = str(args.get("port_spec") or args.get("port_range") or "").strip()
         ports = _ports_from_spec(args.get("ports"))
         # No port argument means every port: the first scan must not miss a
@@ -2595,13 +2584,7 @@ class AgentRuntime:
         if return_code != 0:
             raise RuntimeError((stderr or f"masscan exit {return_code}").strip()[:2000])
         try:
-            target_ports = [int(p) for p in port_argument.split(",") if p.strip().isdigit()]
-            if not target_ports and "-" in port_argument:
-                first_part = port_argument.split("-")[0].strip()
-                if first_part.isdigit():
-                    target_ports = [int(first_part)]
-            if not target_ports:
-                target_ports = [0]
+            target_ports = [0]  # 0 = tam-port tarama işareti
             known_asns = [str(a) for a in self._fact_store.get("asn", set())]
             target_asn = known_asns[0] if known_asns else "UNKNOWN"
             self.ledger.record_scan(

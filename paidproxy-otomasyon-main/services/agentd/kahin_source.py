@@ -61,6 +61,33 @@ _DISCOVERY_JS = (
     "return JSON.stringify(out);"
     "})()"
 )
+_CAPTCHA_JS = (
+    "(() => {"
+    "const img = document.querySelector('img[src*=\"captcha.php\"]');"
+    "const inp = document.querySelector('#p_captcha_response');"
+    "const sub = document.querySelector('#captcha_submit');"
+    "const tok = document.querySelector('input[name=\"captcha_token\"]');"
+    "return JSON.stringify({"
+    "img: img ? String(img.src || '') : null,"
+    "has_input: !!inp, has_submit: !!sub,"
+    "token: tok ? String(tok.value || '').slice(0, 16) : null,"
+    "});"
+    "})()"
+)
+_CAPTCHA_FILL_JS = (
+    "((answer) => {"
+    "const inp = document.querySelector('#p_captcha_response');"
+    "const sub = document.querySelector('#captcha_submit');"
+    "if (!inp || !sub) return JSON.stringify({filled: false});"
+    "inp.focus();"
+    "const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;"
+    "setter.call(inp, String(answer || ''));"
+    "inp.dispatchEvent(new Event('input', {bubbles: true}));"
+    "inp.dispatchEvent(new Event('change', {bubbles: true}));"
+    "sub.click();"
+    "return JSON.stringify({filled: true});"
+    "})()"
+)
 _RANGES_JS = (
     "(() => {"
     "const out = {ranges: [], next: null, title: String(document.title || ''), url: String(location.href)};"
@@ -485,6 +512,67 @@ def _kahin_root() -> Path:
         if (candidate / "kahin/oracle.py").is_file():
             return candidate
     raise RuntimeError("Kahin çalışma alanı bulunamadı")
+async def _solve_myip_captcha(evaluate: Callable[..., Awaitable[str]], img_src: Any) -> dict[str, Any]:
+    """myip.ms Human Verification duvarını Kahin yerleşik OCR ile aş.
+
+    Akış: captcha.php resmini sayfa içinden fetch ile dataURL yap → Kahin
+    ocr (Google Vision TEXT_DETECTION) ile oku → #p_captcha_response doldur
+    → #captcha_submit tıkla. Oturum çerezi tarayıcı içinde yaşar.
+    """
+    from kahin.tools.pilot import ocr as kahin_ocr
+
+    fetch_js = (
+        "((src) => {"
+        "return fetch(String(src || ''), {credentials: 'same-origin'})"
+        ".then(r => { if (!r.ok) throw new Error('captcha http ' + r.status); return r.blob(); })"
+        ".then(b => new Promise((res, rej) => {"
+        "const fr = new FileReader();"
+        "fr.onload = () => res(String(fr.result || ''));"
+        "fr.onerror = () => rej(new Error('captcha read fail'));"
+        "fr.readAsDataURL(b);"
+        "}))"
+        ".then(d => JSON.stringify({data_url: d.slice(0, 200000)}))"
+        ".catch(e => JSON.stringify({error: String(e && e.message || e)}));"
+        "})()"
+    )
+    raw = _evaluate_value(await evaluate(fetch_js.replace("(src)", f"({json.dumps(str(img_src or ''))})")))
+    if not isinstance(raw, dict) or raw.get("error") or not raw.get("data_url"):
+        return {"ok": False, "detail": f"captcha fetch başarısız: {str(raw)[:120]}"}
+    data_url = str(raw["data_url"])
+    if "," not in data_url:
+        return {"ok": False, "detail": "captcha dataURL bozuk"}
+    import base64 as _b64
+
+    try:
+        img_bytes = _b64.b64decode(data_url.split(",", 1)[1])
+    except Exception as exc:
+        return {"ok": False, "detail": f"captcha base64 bozuk: {exc}"}
+    if not img_bytes:
+        return {"ok": False, "detail": "captcha resmi boş"}
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(img_bytes)
+            tmp_path = tmp.name
+        vision = _json(await kahin_ocr(image=tmp_path))
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+    answer = ""
+    for key in ("text", "fullText", "description"):
+        blob = str(vision.get(key) or "").strip()
+        if blob:
+            answer = blob
+            break
+    answer = re.sub(r"[^A-Za-z0-9]", "", answer).strip()
+    if len(answer) < 4:
+        return {"ok": False, "detail": f"OCR captcha okuyamadı: {answer!r}"}
+    fill_js = _CAPTCHA_FILL_JS.replace("(answer)", f"({json.dumps(answer)})", 1)
+    filled = _evaluate_value(await evaluate(fill_js))
+    if not isinstance(filled, dict) or not filled.get("filled"):
+        return {"ok": False, "detail": "captcha formu doldurulamadı"}
+    await asyncio.sleep(2.0)
+    return {"ok": True, "detail": f"captcha gönderildi (OCR: {answer[:3]}***)"}
 
 
 async def _run_kahin(url: str) -> dict[str, Any]:
@@ -545,6 +633,24 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             raise RuntimeError(str(vision["error"]))
         dom = _json(await extract())
         dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+        captcha: dict[str, Any] = {"attempted": False, "solved": False}
+        try:
+            probe = _evaluate_value(await evaluate(_CAPTCHA_JS))
+            if isinstance(probe, dict) and probe.get("img") and probe.get("has_input"):
+                captcha["attempted"] = True
+                solved = await _solve_myip_captcha(evaluate, probe.get("img"))
+                captcha["solved"] = bool(solved.get("ok"))
+                captcha["detail"] = solved.get("detail")
+                if solved.get("ok"):
+                    await navigate(url=target_url, wait_until="domcontentloaded", timeout=30.0)
+                    try:
+                        screenshot_bytes = await state._current_engine.screenshot(full_page=True)
+                    except Exception:
+                        screenshot_bytes = screenshot_bytes
+                    dom = _json(await extract())
+                    dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+        except Exception as exc:  # noqa: BLE001 - captcha bypass is best-effort
+            captcha["error"] = f"{type(exc).__name__}: {exc}"
         discovery: dict[str, Any] = {}
         try:
             discovery = _discover_targets(_evaluate_value(await evaluate(_DISCOVERY_JS)))
@@ -558,6 +664,7 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             "owner_page_url": discovery.get("owner_page_url"),
             "other_sites_on_ip": discovery.get("other_sites_on_ip"),
             "url_go": discovery.get("url_go") or [],
+            "captcha": captcha,
         }
 
     async def _capture_text(target_url: str, meta: bool = False) -> dict[str, Any]:
