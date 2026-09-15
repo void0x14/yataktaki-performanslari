@@ -306,6 +306,29 @@ def _json_write(path: Path, payload: Any) -> str:
     return f"agent://{path.parts[-3]}/{path.relative_to(path.parents[1])}"
 
 
+def _max_decision_seq(output_dir: Path) -> int:
+    """Var olan decision-*.json dosyalarındaki en büyük sayaç (yoksa 0).
+
+    Karar dosyası adları self.step'ten üretilirse restart sonrası sıfırlanıp
+    eski dosyaların üzerine yazılır; bu sayaç max+1'den başlatılarak kanıt
+    kaybını engeller.
+    """
+    peak = 0
+    try:
+        paths = list(output_dir.glob("decision-*.json"))
+    except OSError:
+        return 0
+    for path in paths:
+        match = re.fullmatch(r"decision-(\d+)\.json", path.name)
+        if not match:
+            continue
+        try:
+            peak = max(peak, int(match.group(1)))
+        except ValueError:
+            continue
+    return peak
+
+
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -928,6 +951,7 @@ class AgentRuntime:
         self._directive_offset = 0
         self.operator_directives: list[dict[str, Any]] = []
         self.step = 0
+        self._decision_seq = _max_decision_seq(self.output_dir)
         self._open_ports_to_validate: list[dict[str, Any]] = []
         self._validated_ports: set[tuple[str, int]] = set()
         self._open_ports_by_host: dict[str, set[int]] = {}
@@ -1654,7 +1678,8 @@ class AgentRuntime:
             return None
         decision = dict(raw or {})
         self.last_decision = decision
-        evidence_ref = _json_write(self.output_dir / f"decision-{self.step:05d}.json", decision)
+        self._decision_seq += 1
+        evidence_ref = _json_write(self.output_dir / f"decision-{self._decision_seq:05d}.json", decision)
         self.emit(
             "decision_made",
             self._text(decision.get("expected_value")) or "AI araç kararı hazır.",
@@ -1730,6 +1755,7 @@ class AgentRuntime:
         result: list[tuple[str, dict[str, Any]]] = []
         errors: list[str] = []
         provenance_deferred: list[str] = []
+        resolved: dict[str, dict[str, Any]] = {}
         browse_requested = any(
             isinstance(entry, str) and entry == "browse_public_source"
             or isinstance(entry, dict)
@@ -1761,12 +1787,18 @@ class AgentRuntime:
             if name not in CONTROLLED_TOOLS or name not in ARGUMENT_CONTRACTS:
                 errors.append(f"{name or '<empty>'}: tool not registered")
                 continue
-            arguments = inline_arguments if isinstance(inline_arguments, dict) else args_by_tool.get(name)
+            arguments = inline_arguments if isinstance(inline_arguments, dict) else None
+            if arguments is None and name in resolved:
+                arguments = resolved[name]
+            if arguments is None:
+                arguments = args_by_tool.get(name)
             if not isinstance(arguments, dict) and name not in args_by_tool:
                 for key, value in args_by_tool.items():
                     if re.fullmatch(rf"{re.escape(name)}[_-]\d+", str(key)):
                         arguments = value
                         break
+            if isinstance(arguments, dict):
+                resolved[name] = arguments
             if not isinstance(arguments, dict):
                 errors.append(f"{name}: arguments dict gerekli")
                 continue
