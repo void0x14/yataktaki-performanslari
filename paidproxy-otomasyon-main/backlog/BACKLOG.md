@@ -111,3 +111,19 @@ Canlı geniş tarama politikası daraltılmadan ve kuru komut (dry-run) onaylanm
 
 ### Önerilen sonraki eylem
 - Eski allow/deny wiring kalıntıları gözden geçirilecek.
+
+## 2026-09-15 19:45 — Operatör emirleri uygulandı (tam-port + hız + duvar + dup)
+Durum: Av döngüsü operational, ilk teslim bekleniyor
+
+### Uygulanan emirler
+- TAM PORT: masscan/expand/port_scan her zaman 1-65535; planner port listesi yalnız iz.
+- HIZ: full-range /24 taban rate 100k pps (~3.5dk/CIDR; 56dk tıkanıklığı bitti).
+- MYIP DUVARI: yerinde captcha — crop→3 varyant→Vision OCR (gömülü key)→6-char çoğunluk→type→submit. Doğrulandı: DUVAR False.
+- KÖK NEDEN: pilot.ocr düz metin döndürür, kod JSON sanıp atıyordu → 8 oturum OCR körü. _ocr_text + _dom_text fix.
+- DUP: ledger tam-port kaydı (port 0) + duplicate_skipped kapısı.
+- 403 BREAKER: 2x403 → 30dk myip reddi, burun bgp.he.net'ten işler.
+
+### Kanıt zinciri
+- 115 tarama, 239 L7 çağrısı, 132+ benzersiz host; tüm triage portları gerçek L4 bulgusu (1337/8880/22/91xx şablonu).
+- EGRESS 0 = dürüst sıfır: taranan DC blokları hosting sunucusu, vekil yok. Av sürüyor.
+- Commitler: 2240a54, 44f492a, ec607af, 928d035, 578e522, 99941ba, 31874b0, 6b43471.
