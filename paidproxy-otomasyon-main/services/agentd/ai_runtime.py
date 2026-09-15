@@ -1567,7 +1567,7 @@ class AgentRuntime:
                         "masscan_liveness": {
                             "cidr": str(target_cidr),
                             "port_spec": "1-65535",
-                            "rate": 5000,
+                            "rate": 100000,
                         }
                     }
                 },
@@ -2557,10 +2557,12 @@ class AgentRuntime:
         # recorded for the trace but never restricts the scan.
         requested_ports = str(args.get("port_spec") or args.get("port_range") or ",".join(str(p) for p in _ports_from_spec(args.get("ports"))) or "").strip()
         port_argument = "1-65535"
+        # OPERATOR ORDER (hiz): full-range /24 at 5000pps = 56dk; 100000pps = ~3dk.
+        # VDS masscan ölçüldü: tek IP tam port 8sn. Default 100k, planner override edebilir.
         rate = int(
             args.get("rate")
-            or os.environ.get("PAIDPROXY_MASSCAN_RATE", "5000")
-            or "5000"
+            or os.environ.get("PAIDPROXY_MASSCAN_RATE", "100000")
+            or "100000"
         )
         rate = max(50, min(1_000_000, rate))
         command = _masscan_command(cidr, port_argument, rate)
@@ -2649,8 +2651,8 @@ class AgentRuntime:
         port_range = "1-65535"
         rate = int(
             args.get("rate")
-            or os.environ.get("PAIDPROXY_MASSCAN_RATE", "5000")
-            or "5000"
+            or os.environ.get("PAIDPROXY_MASSCAN_RATE", "100000")
+            or "100000"
         )
         rate = max(50, min(1_000_000, rate))
         confirm_timeout = float(args.get("timeout", 1.5) or 1.5)
