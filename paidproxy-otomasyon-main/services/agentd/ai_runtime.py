@@ -2471,6 +2471,16 @@ class AgentRuntime:
         if host not in _AV_SOURCE_HOSTS:
             raise ValueError("browse_public_source yalnız av hostları: RIPEstat/RDAP/bgp.he.net/myip.ms")
         if host == "myip.ms":
+            # OPERATOR ORDER: myip boş dönemez. 403 breaker: arka arkaya 2x 403
+            # ise 30dk boyunca myip reddedilir — burun bgp.he.net'ten işler,
+            # myip veri verebildiğinde sırasına döner.
+            breaker_until = float(getattr(self, "_myip_breaker_until", 0.0) or 0.0)
+            if time.time() < breaker_until:
+                raise ValueError(
+                    "myip.ms 403 breaker aktif (~30dk): bu turda bgp.he.net veya "
+                    "stat.ripe.net ile kokla; myip'e breaker bitince dön."
+                )
+            from services.agentd.kahin_source import collect_myip_source
             from services.agentd.kahin_source import collect_myip_source
 
             result = collect_myip_source(url)
@@ -2490,6 +2500,17 @@ class AgentRuntime:
             ]
             preview = str(result.get("body_preview") or "")
             if "403" in preview[:400] and "Forbidden" in preview[:400]:
+                result["myip_ms_blocked_403"] = True
+                self._myip_403_streak = int(getattr(self, "_myip_403_streak", 0)) + 1
+                if self._myip_403_streak >= 2:
+                    self._myip_breaker_until = time.time() + 1800
+                    self._myip_403_streak = 0
+                result["working_note"] = (
+                    "myip.ms gecici IP rate-limit (403) uyguladi — kod hatasi degil; "
+                    "duvar gecisi calisiyor. Simdi bgp.he.net'e gec, myip'i ~30dk sonra dene."
+                )
+            else:
+                self._myip_403_streak = 0
                 result["myip_ms_blocked_403"] = True
                 result["working_note"] = (
                     "myip.ms gecici IP rate-limit (403) uyguladi — kod hatasi degil; "
