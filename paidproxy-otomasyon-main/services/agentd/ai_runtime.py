@@ -2553,11 +2553,10 @@ class AgentRuntime:
                 "evidence_refs": [],
                 "next_action": "yeni CIDR seç; aynı kapıya vurma",
             }
-        port_spec = str(args.get("port_spec") or args.get("port_range") or "").strip()
-        ports = _ports_from_spec(args.get("ports"))
-        # No port argument means every port: the first scan must not miss a
-        # port because the planner omitted the intent.
-        port_argument = port_spec or ",".join(str(port) for port in ports) or "1-65535"
+        # OPERATOR ORDER: every port is scanned. The planner's port list is
+        # recorded for the trace but never restricts the scan.
+        requested_ports = str(args.get("port_spec") or args.get("port_range") or ",".join(str(p) for p in _ports_from_spec(args.get("ports"))) or "").strip()
+        port_argument = "1-65535"
         rate = int(
             args.get("rate")
             or os.environ.get("PAIDPROXY_MASSCAN_RATE", "5000")
@@ -2704,13 +2703,9 @@ class AgentRuntime:
     def _expand_live_ip(self, args: dict[str, Any]) -> dict[str, Any]:
         ip = str(args.get("ip", "")).strip()
         ipaddress.ip_address(ip)
-        port_spec = str(args.get("port_spec") or args.get("port_range") or "").strip()
-        ports = _ports_from_spec(args.get("ports"))
-        if not port_spec and not ports:
-            raise ValueError("AI dikey socket genişlemesi için açık port niyeti vermedi")
-        ports = ports or _ports_from_spec(port_spec)
-        if not ports:
-            raise ValueError("dikey socket port kümesi boş")
+        # OPERATOR ORDER: every port is probed. Planner's list is recorded, never restricts.
+        requested = str(args.get("port_spec") or args.get("port_range") or ",".join(str(p) for p in _ports_from_spec(args.get("ports"))) or "").strip()
+        ports = list(range(1, 65536))
         timeout = float(args.get("timeout", 0.6) or 0.6)
         open_ports: list[int] = []
 
