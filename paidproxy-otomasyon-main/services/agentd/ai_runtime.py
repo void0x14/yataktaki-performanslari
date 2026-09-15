@@ -1756,6 +1756,7 @@ class AgentRuntime:
         errors: list[str] = []
         provenance_deferred: list[str] = []
         resolved: dict[str, dict[str, Any]] = {}
+        occurrence_index: dict[str, int] = {}
         browse_requested = any(
             isinstance(entry, str) and entry == "browse_public_source"
             or isinstance(entry, dict)
@@ -1788,10 +1789,23 @@ class AgentRuntime:
                 errors.append(f"{name or '<empty>'}: tool not registered")
                 continue
             arguments = inline_arguments if isinstance(inline_arguments, dict) else None
-            if arguments is None and name in resolved:
-                arguments = resolved[name]
+            occurrence = occurrence_index.get(name, 0)
+            occurrence_index[name] = occurrence + 1
             if arguments is None:
-                arguments = args_by_tool.get(name)
+                raw_arguments = args_by_tool.get(name) if name in args_by_tool else None
+                if isinstance(raw_arguments, list):
+                    # Planner sekli: tekrarli arac + duz anahtar altinda her tekrara
+                    # ait arguman dict'lerinin listesi (orn. decision-00092). Ayni
+                    # name'in tekrarlarina sirayla dagit; fazla tekrar ilkini alir.
+                    dict_items = [item for item in raw_arguments if isinstance(item, dict)]
+                    if occurrence < len(dict_items):
+                        arguments = dict_items[occurrence]
+                    elif dict_items:
+                        arguments = dict_items[0]
+                if arguments is None and name in resolved:
+                    arguments = resolved[name]
+                if arguments is None:
+                    arguments = raw_arguments
             if not isinstance(arguments, dict) and name not in args_by_tool:
                 for key, value in args_by_tool.items():
                     if re.fullmatch(rf"{re.escape(name)}[_-]\d+", str(key)):
