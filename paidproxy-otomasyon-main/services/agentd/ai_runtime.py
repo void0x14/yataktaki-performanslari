@@ -2488,6 +2488,13 @@ class AgentRuntime:
                 result["screenshot_ref"],
                 f"agent://{self.agent_id}/{body_ref.relative_to(self.agent_dir)}",
             ]
+            preview = str(result.get("body_preview") or "")
+            if "403" in preview[:400] and "Forbidden" in preview[:400]:
+                result["myip_ms_blocked_403"] = True
+                result["working_note"] = (
+                    "myip.ms gecici IP rate-limit (403) uyguladi — kod hatasi degil; "
+                    "duvar gecisi calisiyor. Simdi bgp.he.net'e gec, myip'i ~30dk sonra dene."
+                )
             return result
         try:
             addr = ipaddress.ip_address(socket.gethostbyname(host))
