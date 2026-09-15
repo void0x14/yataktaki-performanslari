@@ -1762,6 +1762,11 @@ class AgentRuntime:
                 errors.append(f"{name or '<empty>'}: tool not registered")
                 continue
             arguments = inline_arguments if isinstance(inline_arguments, dict) else args_by_tool.get(name)
+            if not isinstance(arguments, dict) and name not in args_by_tool:
+                for key, value in args_by_tool.items():
+                    if re.fullmatch(rf"{re.escape(name)}[_-]\d+", str(key)):
+                        arguments = value
+                        break
             if not isinstance(arguments, dict):
                 errors.append(f"{name}: arguments dict gerekli")
                 continue
@@ -2722,7 +2727,7 @@ class AgentRuntime:
             and port not in self._open_ports_by_host.get(host, set())
             and (host, port) not in self._validated_ports
         ):
-            raise ValueError("validate için önce L4 açık port kanıtı gerekli")
+            raise ValueError(f"ölü defter/L4-kanıtı yok: {host}:{port} için önce masscan_liveness veya port_scan_live_ip ile açık port kanıtı gerekli; kapalı deftere validate yok")
         target = self._target_from_args(args)
         protocols = args.get("protocols")
         if isinstance(protocols, str):
