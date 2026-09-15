@@ -147,6 +147,21 @@ def _json(value: str) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+def _ocr_text(raw: Any) -> str:
+    """kahin pilot.ocr düz metin döndürür; hata durumunda JSON error gelir."""
+    if not isinstance(raw, str):
+        return str(raw or "")
+    text = raw.strip()
+    if text.startswith("{"):
+        payload = _json(text)
+        if payload.get("error"):
+            raise RuntimeError(str(payload["error"]))
+        for key in ("text", "fullText", "description"):
+            blob = str(payload.get(key) or "").strip()
+            if blob:
+                return blob
+        return ""
+    return text
 
 
 def _facts(text: str) -> dict[str, list[Any]]:
@@ -534,15 +549,11 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temporary:
                 temporary.write(screenshot_bytes)
                 temporary_path = temporary.name
-            vision = _json(await ocr(image=temporary_path))
+            vision = _ocr_text(await ocr(image=temporary_path))
         finally:
             if temporary_path:
                 Path(temporary_path).unlink(missing_ok=True)
             httpx_logger.disabled = previous_disabled
-        if vision.get("error"):
-            if _looks_engine_dead(vision):
-                raise EngineDead(vision)
-            raise RuntimeError(str(vision["error"]))
         dom = _json(await extract())
         dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
         if _is_human_verification("", dom_text):
@@ -552,8 +563,14 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             from kahin.tools.pilot_mirage import mirage_click, mirage_get_attribute, mirage_type
 
             img_src = ""
-            attr = _json(await mirage_get_attribute(selector="img[src*='captcha.php']", name="src"))
-            img_src = str(attr.get("value") or "")
+            try:
+                attr_raw = json.loads(await mirage_get_attribute(selector="img[src*='captcha.php']", name="src"))
+            except (TypeError, json.JSONDecodeError):
+                attr_raw = ""
+            if isinstance(attr_raw, str):
+                img_src = attr_raw
+            elif isinstance(attr_raw, dict):
+                img_src = str(attr_raw.get("value") or "")
             if img_src:
                 captcha_url = img_src if img_src.startswith("http") else "https://myip.ms" + ("/" + img_src.lstrip("/") if not img_src.startswith("/") else img_src)
                 await navigate(url=captcha_url, wait_until="load", timeout=30.0)
@@ -564,12 +581,7 @@ async def _run_kahin(url: str) -> dict[str, Any]:
                     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as cap_file:
                         cap_file.write(bytes(cap_shot))
                         cap_tmp = cap_file.name
-                    cap_vision = _json(await ocr(image=cap_tmp))
-                    for key in ("text", "fullText", "description"):
-                        blob = str(cap_vision.get(key) or "")
-                        if blob:
-                            answer = re.sub(r"[^A-Za-z0-9]", "", blob)
-                            break
+                    answer = re.sub(r"[^A-Za-z0-9]", "", _ocr_text(await ocr(image=cap_tmp)))
                 finally:
                     if cap_tmp:
                         Path(cap_tmp).unlink(missing_ok=True)
@@ -586,7 +598,7 @@ async def _run_kahin(url: str) -> dict[str, Any]:
                         temporary.write(bytes(screenshot_bytes))
                         retry_tmp = temporary.name
                     try:
-                        vision = _json(await ocr(image=retry_tmp))
+                        vision = _ocr_text(await ocr(image=retry_tmp))
                     finally:
                         Path(retry_tmp).unlink(missing_ok=True)
                     dom = _json(await extract())
@@ -768,13 +780,11 @@ def collect_myip_source(url: str, runner: Runner | None = None) -> dict[str, Any
     if parsed.scheme not in {"http", "https"} or parsed.hostname != "myip.ms":
         raise ValueError("Kahin görsel keşfi yalnız myip.ms kabul eder")
     payload = _run((runner or _run_kahin)(url))
-    ocr_payload = payload.get("ocr") if isinstance(payload.get("ocr"), dict) else {}
-    ocr_text = str(
-        ocr_payload.get("text")
-        or ocr_payload.get("fullText")
-        or ocr_payload.get("description")
-        or ""
-    )
+    ocr_raw = payload.get("ocr")
+    if isinstance(ocr_raw, dict):
+        ocr_text = str(ocr_raw.get("text") or ocr_raw.get("fullText") or ocr_raw.get("description") or "")
+    else:
+        ocr_text = str(ocr_raw or "")
     dom_text = str(payload.get("dom_text") or "")
     combined = "\n".join(part for part in (dom_text, ocr_text) if part).strip()
     if not combined:
