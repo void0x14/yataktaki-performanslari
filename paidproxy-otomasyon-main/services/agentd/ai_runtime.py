@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 from proxy_pipeline.tarama_plani import bant_listesi
 from services.agentd.fast_triage import FastTriageEngine, run_fast_triage
-from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, plan_grounded_hunt
+from services.agentd.recon import classify_target, fetch_bgp_announced_prefixes, fetch_network_info, plan_grounded_hunt
 from services.agentd.scanned_ledger import ScannedLedger
 from services.agentd.dataset_recorder import ScreenRecorder, TrajectoryLogger
 
@@ -2713,6 +2713,16 @@ class AgentRuntime:
         port = int(args.get("port", 0) or 0)
         if not host or not 1 <= port <= 65535:
             raise ValueError("proxy host/port eksik")
+        pending_keys = {
+            (str(item.get("host") or item.get("ip") or ""), int(item.get("port") or 0))
+            for item in self._pending_open_ports()
+        }
+        if (
+            (host, port) not in pending_keys
+            and port not in self._open_ports_by_host.get(host, set())
+            and (host, port) not in self._validated_ports
+        ):
+            raise ValueError("validate için önce L4 açık port kanıtı gerekli")
         target = self._target_from_args(args)
         protocols = args.get("protocols")
         if isinstance(protocols, str):
@@ -3070,6 +3080,15 @@ class AgentRuntime:
         if not asn and ip:
             ctx = self._inspect_owner_context({"ip": ip})
             asn = str(ctx.get("asn") or "")
+            if not asn:
+                try:
+                    info = fetch_network_info(ip)
+                    if info.get("asn"):
+                        asn = f"AS{info['asn']}"
+                        if not str(args.get("org") or "").strip() and info.get("holder"):
+                            args = dict(args, org=str(info["holder"]))
+                except Exception:
+                    pass
         if not asn:
             raise ValueError("recon_bgp için geçerli bir ASN veya IP gerekli")
         plan = plan_grounded_hunt(asn, str(args.get("org") or "Unknown Org"))

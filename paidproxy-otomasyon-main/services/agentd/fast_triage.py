@@ -74,7 +74,7 @@ class FastTriageEngine:
                     asyncio.open_connection(host, port),
                     timeout=self.connect_timeout,
                 )
-            except (OSError, asyncio.TimeoutError) as exc:
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
                 if attempt == self.retries:
                     return {
                         "protocol": "http_connect",
@@ -163,7 +163,7 @@ class FastTriageEngine:
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
                 }
 
-            except (OSError, asyncio.TimeoutError) as exc:
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
                 return {
                     "protocol": "http_connect",
                     "stage": "handshake",
@@ -200,7 +200,7 @@ class FastTriageEngine:
                     asyncio.open_connection(host, port),
                     timeout=self.connect_timeout,
                 )
-            except (OSError, asyncio.TimeoutError) as exc:
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
                 if attempt == self.retries:
                     return {
                         "protocol": "socks5",
@@ -304,7 +304,7 @@ class FastTriageEngine:
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
                 }
 
-            except (OSError, asyncio.TimeoutError) as exc:
+            except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
                 return {
                     "protocol": "socks5",
                     "stage": "handshake",

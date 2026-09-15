@@ -98,6 +98,43 @@ def fetch_bgp_announced_prefixes(asn: str | int, timeout: float = 6.0) -> list[s
         return []
 
 
+def fetch_as_holder(asn: str | int, timeout: float = 6.0) -> str:
+    """Registered holder/org name for an ASN via RIPEstat as-overview."""
+    num_asn = clean_asn(asn)
+    url = f"https://stat.ripe.net/data/as-overview/data.json?resource=AS{num_asn}"
+    req = urllib.request.Request(url, headers={"User-Agent": "paidproxy-recon/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", {})
+        return str(data.get("holder") or "")
+    except Exception as exc:
+        logger.warning(f"RIPEstat as-overview query failed for AS{num_asn}: {exc}")
+        return ""
+
+
+def fetch_network_info(ip: str, timeout: float = 6.0) -> dict[str, Any]:
+    """Resolve an IP to prefix, origin ASN and holder via RIPEstat network-info.
+
+    RDAP returns netblock handles without an origin ASN; the announced prefix
+    and origin ASN come from the routing view so recon can proceed grounded.
+    """
+    info: dict[str, Any] = {"ip": ip, "asn": None, "prefix": "", "holder": ""}
+    url = f"https://stat.ripe.net/data/network-info/data.json?resource={ip}"
+    req = urllib.request.Request(url, headers={"User-Agent": "paidproxy-recon/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", {})
+    except Exception as exc:
+        logger.warning(f"RIPEstat network-info query failed for {ip}: {exc}")
+        return info
+    info["prefix"] = str(data.get("prefix") or "")
+    asns = data.get("asns") or []
+    if asns:
+        info["asn"] = clean_asn(asns[0])
+        info["holder"] = fetch_as_holder(int(info["asn"]), timeout=timeout)
+    return info
+
+
 def sample_reverse_dns(
     cidr: str,
     max_samples: int = 5,
