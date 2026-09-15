@@ -2565,6 +2565,10 @@ class AgentRuntime:
             or "100000"
         )
         rate = max(50, min(1_000_000, rate))
+        # OPERATOR ORDER (hiz): planner'in düsük rate'i tam-port taramasini
+        # saatlere yayamaz. Full-range'de alt sinir 100k pps.
+        if port_argument == "1-65535":
+            rate = max(rate, 100_000)
         command = _masscan_command(cidr, port_argument, rate)
         output_path = self.output_dir / f"l4-{self.step:05d}.list"
         discovered = []
