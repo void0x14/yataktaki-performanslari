@@ -1476,6 +1476,17 @@ class AgentRuntime:
                 consecutive_no_tool_rounds = 0
                 for tool_name, arguments in tools:
                     if self.stopped() or self.check_interrupt():
+                        pending = self.consume_interrupt()
+                        self._read_operator_directives()
+                        self.emit(
+                            "operator_interrupt_acknowledged",
+                            "Operatör interrupt'i alındı ve tüketildi; yeni yönlendirme bir sonraki karara girecek.",
+                            state="running",
+                            tool="ai_planner",
+                            target="vds://agent/decision",
+                            operator_action="interrupt_acknowledged",
+                            next_action="Kalan araçlar atlandı, yeni karar bekleniyor",
+                        )
                         break
                     self._invoke(tool_name, arguments)
             self.emit(
