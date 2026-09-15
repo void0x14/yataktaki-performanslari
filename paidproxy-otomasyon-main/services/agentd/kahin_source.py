@@ -147,6 +147,23 @@ def _json(value: str) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _dom_text(dom: Any) -> str:
+    """extract() cevabını metne çevir; çift zarsa (value içinde value) aç."""
+    value = dom.get("value") if isinstance(dom, dict) else dom
+    for _ in range(3):
+        if isinstance(value, dict):
+            value = value.get("value") or value.get("text") or ""
+        elif isinstance(value, str) and value.startswith("{"):
+            inner = _json(value)
+            if inner:
+                value = inner.get("value") or inner.get("text") or ""
+            else:
+                break
+        else:
+            break
+    return str(value or "")
 def _ocr_text(raw: Any) -> str:
     """kahin pilot.ocr düz metin döndürür; hata durumunda JSON error gelir."""
     if not isinstance(raw, str):
@@ -532,6 +549,14 @@ async def _run_kahin(url: str) -> dict[str, Any]:
             raise RuntimeError(str(navigation["error"]))
         if state._current_engine is None:
             raise EngineDead({"error": "Browser engine is dead (crashed).", "code": "engine_dead"})
+        for _ in range(6):
+            await asyncio.sleep(2.0)
+            try:
+                early = _json(await extract())
+                if len(str(early.get("value") or "")) > 200:
+                    break
+            except Exception:
+                pass
         try:
             screenshot_bytes = await state._current_engine.screenshot(full_page=True)
         except Exception as exc:  # noqa: BLE001 - engine death surfaces as a raw error
@@ -555,41 +580,104 @@ async def _run_kahin(url: str) -> dict[str, Any]:
                 Path(temporary_path).unlink(missing_ok=True)
             httpx_logger.disabled = previous_disabled
         dom = _json(await extract())
-        dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+        dom_text = _dom_text(dom)
         if _is_human_verification("", dom_text):
-            # OPERATOR ORDER: kahin's own tools clear the myip.ms wall.
-            # captcha.php resmini Vision OCR'ye gönder, çıkan metni kutuya yaz,
-            # gönder düğmesine bas. Yerleşik pilot/mirage araçları; elle JS yok.
-            from kahin.tools.pilot_mirage import mirage_click, mirage_get_attribute, mirage_type
+            # OPERATOR ORDER: kahin's own tools clear the myip.ms wall IN PLACE.
+            # Sayfadan AYRILMA yok: ayrılınca captcha token yenileniyor ve eski
+            # cevap çöp oluyor. Captcha resminin rect'ini mirage_query ile al,
+            # ekran görüntüsünden kırp, Vision OCR'ye gönder, kutuya yaz, bas.
+            from kahin.tools.pilot_mirage import (
+                mirage_click,
+                mirage_query,
+                mirage_type,
+                mirage_wait_selector,
+            )
 
-            img_src = ""
             try:
-                attr_raw = json.loads(await mirage_get_attribute(selector="img[src*='captcha.php']", name="src"))
-            except (TypeError, json.JSONDecodeError):
-                attr_raw = ""
-            if isinstance(attr_raw, str):
-                img_src = attr_raw
-            elif isinstance(attr_raw, dict):
-                img_src = str(attr_raw.get("value") or "")
-            if img_src:
-                captcha_url = img_src if img_src.startswith("http") else "https://myip.ms" + ("/" + img_src.lstrip("/") if not img_src.startswith("/") else img_src)
-                await navigate(url=captcha_url, wait_until="load", timeout=30.0)
-                cap_shot = await state._current_engine.screenshot(full_page=False)
-                cap_tmp = ""
-                answer = ""
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as cap_file:
-                        cap_file.write(bytes(cap_shot))
-                        cap_tmp = cap_file.name
-                    answer = re.sub(r"[^A-Za-z0-9]", "", _ocr_text(await ocr(image=cap_tmp)))
-                finally:
-                    if cap_tmp:
-                        Path(cap_tmp).unlink(missing_ok=True)
-                if answer:
-                    await navigate(url=target_url, wait_until="domcontentloaded", timeout=30.0)
+                import io
+
+                from PIL import Image
+
+                for attempt in range(5):
+                    if not _is_human_verification("", dom_text):
+                        break
+                    # myip duvar geçmi ~12sn gecikmeli render oluyor; img DOM'a
+                    # gelmeden rect sorgusu boş döner. Önce bekle.
+                    try:
+                        await mirage_wait_selector(
+                            selector="img[src*='captcha.php']", state="attached", timeout=20.0
+                        )
+                    except Exception:
+                        pass
+                    query = _json(await mirage_query(selector="img[src*='captcha.php']"))
+                    rect = query.get("rect") if isinstance(query.get("rect"), dict) else None
+                    answer = ""
+                    if rect and rect.get("width") and rect.get("height"):
+                        page_shot = await state._current_engine.screenshot(full_page=False)
+                        # isik gürültü cizgileri ince, metin kalin: erozyon + esik
+                        # captcha glyph'lerini Vision icin netlestirir
+                        picture = Image.open(io.BytesIO(bytes(page_shot)))
+                        inner_width = 0.0
+                        try:
+                            inner_width = float(_evaluate_value(await evaluate("String(window.innerWidth || 0)")) or 0)
+                        except (TypeError, ValueError):
+                            inner_width = 0.0
+                        scale = picture.width / inner_width if inner_width > 0 else 1.0
+                        scale = max(0.5, min(4.0, scale))
+                        x0 = max(0, int((rect["x"] - 6) * scale))
+                        y0 = max(0, int((rect["y"] - 6) * scale))
+                        x1 = min(picture.width, int((rect["x"] + rect["width"] + 6) * scale))
+                        y1 = min(picture.height, int((rect["y"] + rect["height"] + 6) * scale))
+                        if x1 > x0 + 8 and y1 > y0 + 8:
+                            from collections import Counter
+
+                            from PIL import ImageFilter
+
+                            raw = picture.crop((x0, y0, x1, y1))
+                            variants: list[Image.Image] = [
+                                raw.resize((raw.width * 3, raw.height * 3), Image.LANCZOS)
+                            ]
+                            gray = raw.convert("L")
+                            er = gray.filter(ImageFilter.MinFilter(3)).point(lambda p: 0 if p < 140 else 255)
+                            variants.append(er.resize((er.width * 3, er.height * 3), Image.LANCZOS))
+                            op = gray.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+                            op = op.point(lambda p: 0 if p < 150 else 255)
+                            variants.append(op.resize((op.width * 3, op.height * 3), Image.LANCZOS))
+                            crop_tmp = ""
+                            candidates: list[str] = []
+                            try:
+                                for variant in variants:
+                                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as cap_file:
+                                        crop_tmp = cap_file.name
+                                    variant.save(crop_tmp)
+                                    blob = re.sub(r"[^A-Za-z0-9]", "", _ocr_text(await ocr(image=crop_tmp)))
+                                    if len(blob) == 6:
+                                        candidates.append(blob)
+                            finally:
+                                if crop_tmp:
+                                    Path(crop_tmp).unlink(missing_ok=True)
+                            if candidates:
+                                answer = Counter(candidates).most_common(1)[0][0]
+                    recovery["captcha_attempted"] = True
+                    recovery["captcha_solved"] = bool(answer)
+                    recovery.setdefault("captcha_diag", []).append(
+                        {
+                            "attempt": attempt,
+                            "rect": bool(rect and rect.get("width")),
+                            "answer_len": len(answer),
+                        }
+                    )
+                    if not answer:
+                        await asyncio.sleep(2.0)
+                        continue
                     await mirage_type(selector="#p_captcha_response", text=answer)
                     await mirage_click(selector="#captcha_submit")
-                    await asyncio.sleep(3.0)
+                    for _ in range(10):
+                        await asyncio.sleep(2.0)
+                        probe = _json(await extract())
+                        probe_text = str(probe.get("value") or "")
+                        if len(probe_text) > 200:
+                            break
                     try:
                         screenshot_bytes = await state._current_engine.screenshot(full_page=True)
                     except Exception:
@@ -602,7 +690,18 @@ async def _run_kahin(url: str) -> dict[str, Any]:
                     finally:
                         Path(retry_tmp).unlink(missing_ok=True)
                     dom = _json(await extract())
-                    dom_text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+                    dom_text = _dom_text(dom)
+                    if _is_human_verification("", dom_text):
+                        await navigate(url=target_url, wait_until="domcontentloaded", timeout=30.0)
+                        for _ in range(10):
+                            await asyncio.sleep(2.0)
+                            probe = _json(await extract())
+                            if len(str(probe.get("value") or "")) > 200:
+                                break
+                        dom = _json(await extract())
+                        dom_text = _dom_text(dom)
+            except Exception as exc:  # noqa: BLE001 - wall bypass must not kill the capture
+                recovery["captcha_bypass_error"] = f"{type(exc).__name__}: {exc}"
         discovery: dict[str, Any] = {}
         try:
             discovery = _discover_targets(_evaluate_value(await evaluate(_DISCOVERY_JS)))
@@ -625,7 +724,7 @@ async def _run_kahin(url: str) -> dict[str, Any]:
                 raise EngineDead(navigation)
             raise RuntimeError(str(navigation["error"]))
         dom = _json(await extract())
-        text = str(dom.get("value") or dom.get("result") or dom.get("text") or "")
+        text = _dom_text(dom)
         title = ""
         try:
             title = str(_evaluate_value(await evaluate("String(document.title || '')")) or "")
