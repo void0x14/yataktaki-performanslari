@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { createElement, Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot, Download, Copy, Zap, RefreshCw, FileText } from 'lucide';
+import { createElement, Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot } from 'lucide';
 import './styles.css';
 import './observability.css';
 import { checkedResponse, eventCursor, mergeEvents, mergeEventsChunked, evidenceImageRef } from './observability';
@@ -8,36 +8,13 @@ import { checkedResponse, eventCursor, mergeEvents, mergeEventsChunked, evidence
 type Agent = Record<string, any>;
 type EventRow = Record<string, any>;
 
-const icons: Record<string, any> = { Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot, Download, Copy, Zap, RefreshCw, FileText };
+const icons: Record<string, any> = { Search, Plus, SlidersHorizontal, Command, Monitor, Terminal, Folder, Globe, Cpu, MousePointer2, Hand, Crosshair, CookingPot, Keyboard, Maximize2, Eye, RotateCcw, GitBranch, Pause, Square, Camera, MousePointerClick, Send, ChevronLeft, ChevronRight, Radio, AlertTriangle, CircleDot };
 const state = {
   agents: [] as Agent[], selected: '', events: [] as EventRow[], owner: 'agent', tool: 'cursor',
   connected: false, liveState: '', frameCount: 0, inspectIndex: -1, inspectDataUrl: '', frameCache: new Map<string, string>(),
   filter: 'all', eventFilter: 'all', activeTab: 'activity', pending: new Set<string>(),
   hasLiveImage: false, lastFrameAt: 0, liveFps: 0, liveResolution: '',
   zoom: 1, zoomX: 0, zoomY: 0, panning: false, panStartX: 0, panStartY: 0,
-  mainViewTab: 'proxies',
-  proxySearch: '',
-  proxyFilter: 'all',
-  proxyPage: 0,
-  harvest: {
-    open_ports: 0,
-    total_live: 0,
-    v6_count: 0,
-    v4_count: 0,
-    rotate_count: 0,
-    socks_count: 0,
-    connect_count: 0,
-    scan_progress: 'Hazırlanıyor...',
-    scan_log: '',
-    proxies: [] as Array<{
-      endpoint: string;
-      protocol: string;
-      version: string;
-      type: string;
-      rotation: string;
-      egress: string;
-    }>,
-  },
 };
 let liveFrameQueued: {state?:string;detail?:string;width?:number;height?:number;image?:string;seq?:number;fps?:number;ts?:number} | null = null;
 let lastMouseSend = 0;
@@ -80,14 +57,8 @@ function appShell() {
   <main class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">P</span><div><b>PAIDPROXY</b><span>OPERASYON KOKPİTİ</span></div></div>
-      <div class="topbar-stats" id="topbar-stats">
-        <span class="stat-chip">Açık: <b id="stat-top-open">0</b></span>
-        <span class="stat-chip live">Canlı: <b id="stat-top-live">0</b></span>
-        <span class="stat-chip v6">v6: <b id="stat-top-v6">0</b></span>
-        <span class="stat-chip rotate">Rotate: <b id="stat-top-rotate">0</b></span>
-      </div>
       <div class="agent-glance"><span class="presence"></span><div><b id="glance-name">Ajan seçilmedi</b><small id="glance-action">Canlı durum bekleniyor</small></div></div>
-      <div class="top-actions"><span class="connection" id="connection">${icon('Radio')} VDS BAĞLANIYOR</span><button data-action="export-all" class="primary">${icon('Download')} Tümünü İndir</button></div>
+      <div class="top-actions"><span class="connection" id="connection">${icon('Radio')} VDS BAĞLANIYOR</span><button data-action="create" class="primary">${icon('Plus')} Yeni ajan</button></div>
     </header>
     <section class="cockpit">
       <aside class="agent-rail">
@@ -98,30 +69,20 @@ function appShell() {
         <nav class="rail-tools"><small>ARAÇLAR</small><button data-action="palette">${icon('Command')} Komut Paleti <kbd>Ctrl K</kbd></button><button data-tab="evidence">${icon('Folder')} Dosyalar</button></nav>
       </aside>
       <section class="main-column">
-        <div class="view-tabs">
-          <button class="active" data-view-tab="proxies">${icon('Globe')} PROXY MASASI (CANLI)</button>
-          <button data-view-tab="harvester">${icon('Crosshair')} ÇAPA & GENLEME</button>
-          <button data-view-tab="live">${icon('Monitor')} CANLI VDS & SWAY</button>
-          <button data-view-tab="evidence">${icon('Folder')} KANITLAR</button>
-          <span id="display-state">● HAZIR</span>
-        </div>
-        <div id="panel-proxies" class="view-panel"></div>
-        <div id="panel-harvester" class="view-panel" hidden></div>
-        <div id="panel-live" class="view-panel view-panel-live" hidden>
-          <div class="viewport" id="viewport" tabindex="0">
-            <div class="browser-chrome"><span></span><span></span><span></span><div id="target-url">VDS görüntüsü bekleniyor</div></div>
-            <div class="screen" id="screen"><img id="live-frame" alt="" hidden/><div class="screen-loader" id="screen-loader" hidden><i></i><span>Canlı VDS akışı kuruluyor…</span></div><div class="screen-empty" id="screen-empty"><b>CANLI VDS</b><span id="screen-note">Gerçek WayVNC görüntüsü bekleniyor</span></div><div class="agent-cursor" id="agent-cursor">◆<em>AJAN</em></div><div class="human-cursor" id="human-cursor">↖<em>SİZ</em></div><div class="bonk" id="bonk">BONK!</div></div>
-            <div class="floating-tools">
-              <button class="active" data-tool="cursor" title="Cursor">${icon('MousePointer2',16)}</button><button data-tool="pan" title="Pan">${icon('Hand',16)}</button><button data-tool="target" title="Hedef göster">${icon('Crosshair',16)}</button><button data-tool="tencere" class="tencere" title="Tencere">${icon('CookingPot',16)}</button><button data-tool="keyboard" title="Klavye">${icon('Keyboard',16)}</button><button data-action="fullscreen" title="Tam ekran">${icon('Maximize2',16)}</button>
-            </div>
-            <div class="viewport-foot"><span id="live-pill"><i></i> Canlı</span><span id="stream-latency">gecikme —</span><span id="stream-fps">— fps</span><b id="resolution">—</b></div>
+        <div class="view-tabs"><button class="active" data-tab="live">${icon('Monitor')} Canlı VDS</button><button data-tab="evidence">${icon('Folder')} Kanıtlar</button><span id="display-state">● HAZIR</span></div>
+        <div class="viewport" id="viewport" tabindex="0">
+          <div class="browser-chrome"><span></span><span></span><span></span><div id="target-url">VDS görüntüsü bekleniyor</div></div>
+          <div class="screen" id="screen"><img id="live-frame" alt="" hidden/><div class="screen-loader" id="screen-loader" hidden><i></i><span>Canlı VDS akışı kuruluyor…</span></div><div class="screen-empty" id="screen-empty"><b>CANLI VDS</b><span id="screen-note">Gerçek WayVNC görüntüsü bekleniyor</span></div><div class="agent-cursor" id="agent-cursor">◆<em>AJAN</em></div><div class="human-cursor" id="human-cursor">↖<em>SİZ</em></div><div class="bonk" id="bonk">BONK!</div></div>
+          <div class="floating-tools">
+            <button class="active" data-tool="cursor" title="Cursor">${icon('MousePointer2',16)}</button><button data-tool="pan" title="Pan">${icon('Hand',16)}</button><button data-tool="target" title="Hedef göster">${icon('Crosshair',16)}</button><button data-tool="tencere" class="tencere" title="Tencere">${icon('CookingPot',16)}</button><button data-tool="keyboard" title="Klavye">${icon('Keyboard',16)}</button><button data-action="fullscreen" title="Tam ekran">${icon('Maximize2',16)}</button>
           </div>
-          <section class="replay"><div class="replay-head"><b>FRAME / REPLAY</b><span id="replay-position">Kayıt yok</span><div><button data-action="prev">${icon('ChevronLeft')}</button><button data-action="next">${icon('ChevronRight')}</button><button data-action="live" class="live-button">● Canlıya dön</button></div></div><div class="frame-strip" id="frame-strip"><div class="empty-frame">Gerçek frame event'i bekleniyor</div></div><div class="scrubber" id="scrubber" role="slider" aria-label="Zaman çizelgesi" tabindex="0"><div class="scrubber-track" id="scrubber-track"><div class="scrubber-fill" id="scrubber-fill"></div><div class="scrubber-thumb" id="scrubber-thumb"></div></div><input id="scrub" type="range" min="0" max="0" value="0" tabindex="-1"/></div></section>
-          <section class="workspace">
-            <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button></div>
-            <div class="workspace-body"><div class="activity-pane"><div class="event-filters"><button class="active" data-event-filter="all">Tümü</button><button data-event-filter="thinking">Düşünce</button><button data-event-filter="intervention">Eylem</button><button data-event-filter="tool">Araç</button><button data-event-filter="error">Hata</button></div><div id="event-list" class="event-list"><div class="empty-event">Bir ajan seçildiğinde gerçek olay akışı burada görünür.</div></div></div><aside class="inspector"><div class="inspector-tabs"><b>Görüntü</b><span>Ham Veri</span><span>Analiz</span></div><div class="preview" id="preview" title="Büyütmek için tıkla"><img id="preview-img" alt="" hidden/><span id="preview-text">FRAME ÖNİZLEMESİ</span><span class="preview-hint" id="preview-hint" hidden>Büyüt ⤢</span></div><dl id="metadata"><div><dt>Zaman</dt><dd>—</dd></div><div><dt>Eylem</dt><dd>—</dd></div><div><dt>Ajan</dt><dd>—</dd></div><div><dt>Dosya</dt><dd>—</dd></div></dl></aside></div>
-          </section>
+          <div class="viewport-foot"><span id="live-pill"><i></i> Canlı</span><span id="stream-latency">gecikme —</span><span id="stream-fps">— fps</span><b id="resolution">—</b></div>
         </div>
+        <section class="replay"><div class="replay-head"><b>FRAME / REPLAY</b><span id="replay-position">Kayıt yok</span><div><button data-action="prev">${icon('ChevronLeft')}</button><button data-action="next">${icon('ChevronRight')}</button><button data-action="live" class="live-button">● Canlıya dön</button></div></div><div class="frame-strip" id="frame-strip"><div class="empty-frame">Gerçek frame event'i bekleniyor</div></div><div class="scrubber" id="scrubber" role="slider" aria-label="Zaman çizelgesi" tabindex="0"><div class="scrubber-track" id="scrubber-track"><div class="scrubber-fill" id="scrubber-fill"></div><div class="scrubber-thumb" id="scrubber-thumb"></div></div><input id="scrub" type="range" min="0" max="0" value="0" tabindex="-1"/></div></section>
+        <section class="workspace">
+          <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button></div>
+          <div class="workspace-body"><div class="activity-pane"><div class="event-filters"><button class="active" data-event-filter="all">Tümü</button><button data-event-filter="thinking">Düşünce</button><button data-event-filter="intervention">Eylem</button><button data-event-filter="tool">Araç</button><button data-event-filter="error">Hata</button></div><div id="event-list" class="event-list"><div class="empty-event">Bir ajan seçildiğinde gerçek olay akışı burada görünür.</div></div></div><aside class="inspector"><div class="inspector-tabs"><b>Görüntü</b><span>Ham Veri</span><span>Analiz</span></div><div class="preview" id="preview" title="Büyütmek için tıkla"><img id="preview-img" alt="" hidden/><span id="preview-text">FRAME ÖNİZLEMESİ</span><span class="preview-hint" id="preview-hint" hidden>Büyüt ⤢</span></div><dl id="metadata"><div><dt>Zaman</dt><dd>—</dd></div><div><dt>Eylem</dt><dd>—</dd></div><div><dt>Ajan</dt><dd>—</dd></div><div><dt>Dosya</dt><dd>—</dd></div></dl></aside></div>
+        </section>
       </section>
       <aside class="control-panel">
         <div class="control-head"><div class="avatar">✦</div><div><small>SEÇİLİ AJAN</small><h2 id="detail-name">Ajan seçilmedi</h2><p id="detail-id">—</p></div><span class="state-pill" id="detail-state">OFFLINE</span></div>
@@ -230,22 +191,6 @@ function renderHuntFacts(a: Agent) {
 function publishedProxies(): Agent[] {
   const seen = new Set<string>();
   const out: Agent[] = [];
-  for (const p of state.harvest.proxies) {
-    const parts = String(p.endpoint || '').split(':');
-    if (parts.length < 2) continue;
-    const [host, port] = parts;
-    const identity = `${host}:${port}`;
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    out.push({
-      host,
-      port: Number(port),
-      protocol: p.protocol || 'HTTP',
-      quality_label: `${p.version} ${p.rotation} ${p.type}`,
-      validation_ref: p.egress || 'egress-ok',
-      agent_id: 'harvest',
-    });
-  }
   for (const agent of state.agents) {
     for (const proxy of (Array.isArray(agent.published_proxies) ? agent.published_proxies : [])) {
       const host = String(proxy?.host || '');
@@ -261,387 +206,40 @@ function publishedProxies(): Agent[] {
   }
   return out;
 }
-
 function proxyLine(proxy: Agent): string {
-  return `${proxy.host}:${proxy.port}`;
+  return `${proxy.host}:${proxy.port}\t${proxy.protocol}\t${proxy.quality_label || 'unlabeled'}\t${proxy.validation_ref}`;
 }
-
 function renderProxies() {
   const list = document.querySelector('#proxy-list');
   const count = document.querySelector('#proxy-count');
   if (!list || !count) return;
   const proxies = publishedProxies();
   count.textContent = String(proxies.length);
-  list.innerHTML = proxies.length ? proxies.slice(0, 80).map(proxy => {
+  list.innerHTML = proxies.length ? proxies.map(proxy => {
     const line = proxyLine(proxy);
-    return `<article class="proxy-row"><code>${esc(`${proxy.host}:${proxy.port}`)}</code><span>${esc(proxy.protocol)}</span><small>${esc(proxy.quality_label || 'doğrulandı')}</small><button class="proxy-copy" data-proxy-copy="${esc(encodeURIComponent(line))}">Kopyala</button></article>`;
+    return `<article class="proxy-row"><code>${esc(`${proxy.host}:${proxy.port}`)}</code><span>${esc(proxy.protocol)}</span><small>${esc(proxy.quality_label || 'doğrulandı')} · ${esc(proxy.validation_ref)}</small><button class="proxy-copy" data-proxy-copy="${esc(encodeURIComponent(line))}">Kopyala</button></article>`;
   }).join('') : '<div class="empty-event">Gerçek L7 + çıkış kanıtı bekleniyor.</div>';
   list.querySelectorAll<HTMLElement>('[data-proxy-copy]').forEach(button => button.onclick = async () => {
     const value = decodeURIComponent(button.dataset.proxyCopy || '');
     try {
       await navigator.clipboard.writeText(value);
-      setStatus('Proxy kopyalandı');
+      setStatus('Doğrulanmış proxy panoya kopyalandı');
     } catch (error) {
       setStatus(`Kopyalama başarısız · ${String(error)}`, true);
     }
   });
 }
-
 function exportProxies() {
-  downloadCategory('all');
-}
-
-function renderTopStats() {
-  const h = state.harvest;
-  const elOpen = document.querySelector<HTMLElement>('#stat-top-open');
-  const elLive = document.querySelector<HTMLElement>('#stat-top-live');
-  const elV6 = document.querySelector<HTMLElement>('#stat-top-v6');
-  const elRot = document.querySelector<HTMLElement>('#stat-top-rotate');
-  if (elOpen) elOpen.textContent = h.open_ports.toLocaleString();
-  if (elLive) elLive.textContent = h.total_live.toLocaleString();
-  if (elV6) elV6.textContent = h.v6_count.toLocaleString();
-  if (elRot) elRot.textContent = h.rotate_count.toLocaleString();
-}
-
-function downloadCategory(cat: string) {
-  let list = state.harvest.proxies;
-  let filename = `proxies-${new Date().toISOString().slice(0, 10)}.txt`;
-  if (cat === 'v6') {
-    list = list.filter(p => p.version === 'v6');
-    filename = `v6_forward-${new Date().toISOString().slice(0, 10)}.txt`;
-  } else if (cat === 'rotate') {
-    list = list.filter(p => p.rotation === 'rotate');
-    filename = `rotate_proxies-${new Date().toISOString().slice(0, 10)}.txt`;
-  } else if (cat === 'v4') {
-    list = list.filter(p => p.version === 'v4');
-    filename = `v4_forward-${new Date().toISOString().slice(0, 10)}.txt`;
-  } else if (cat === 'socks') {
-    list = list.filter(p => p.protocol.includes('SOCKS'));
-    filename = `socks5-${new Date().toISOString().slice(0, 10)}.txt`;
-  }
-  if (!list.length) {
-    const pub = publishedProxies();
-    if (pub.length) {
-      const text = pub.map(p => `${p.host}:${p.port}`).join('\n') + '\n';
-      const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      return setStatus(`${pub.length} adet proxy ${filename} olarak indirildi`);
-    }
-    return setStatus('Bu filtrede indirilecek proxy yok', true);
-  }
-  const text = list.map(p => p.endpoint).join('\n') + '\n';
-  const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+  const proxies = publishedProxies();
+  if (!proxies.length) return setStatus('Export için doğrulanmış proxy yok', true);
+  const blob = new Blob([proxies.map(proxyLine).join('\n') + '\n'], {type:'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `proxies-${new Date().toISOString().slice(0,10)}.txt`;
+  anchor.click();
   URL.revokeObjectURL(url);
-  setStatus(`${list.length} adet proxy ${filename} olarak indirildi`);
-}
-
-function renderProxyBench() {
-  const panel = document.querySelector<HTMLElement>('#panel-proxies');
-  if (!panel || state.mainViewTab !== 'proxies') return;
-
-  const h = state.harvest;
-  const q = state.proxySearch.trim().toLowerCase();
-  const f = state.proxyFilter;
-  const filtered = h.proxies.filter(p => {
-    if (f === 'v6' && p.version !== 'v6') return false;
-    if (f === 'v4' && p.version !== 'v4') return false;
-    if (f === 'rotate' && p.rotation !== 'rotate') return false;
-    if (f === 'socks_con' && !p.protocol.includes('SOCKS') && !p.protocol.includes('CON')) return false;
-    if (q) {
-      const line = `${p.endpoint} ${p.protocol} ${p.version} ${p.type} ${p.rotation} ${p.egress}`.toLowerCase();
-      if (!line.includes(q)) return false;
-    }
-    return true;
-  });
-
-  const pageSize = 100;
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  if (state.proxyPage >= totalPages) state.proxyPage = 0;
-  const pageItems = filtered.slice(state.proxyPage * pageSize, (state.proxyPage + 1) * pageSize);
-
-  panel.innerHTML = `
-    <div class="proxy-bench">
-      <div class="bench-metrics">
-        <div class="metric-card"><small>Taranan Port (Hits)</small><b>${h.open_ports.toLocaleString()}</b></div>
-        <div class="metric-card live"><small>Doğrulanan Canlı</small><b>${h.total_live.toLocaleString()}</b></div>
-        <div class="metric-card v6"><small>v6 Egress (Çift Katman)</small><b>${h.v6_count.toLocaleString()}</b></div>
-        <div class="metric-card rotate"><small>Rotate Proxy</small><b>${h.rotate_count.toLocaleString()}</b></div>
-        <div class="metric-card"><small>v4 Egress</small><b>${h.v4_count.toLocaleString()}</b></div>
-        <div class="metric-card socks"><small>SOCKS / CONNECT</small><b>${(h.socks_count + h.connect_count).toLocaleString()}</b></div>
-      </div>
-
-      <div class="bench-toolbar">
-        <div class="bench-search">
-          ${icon('Search', 13)}
-          <input id="bench-search-input" placeholder="IP, Port, Çıkış ara..." value="${esc(state.proxySearch)}"/>
-        </div>
-        <div class="bench-filters">
-          <button class="${f === 'all' ? 'active' : ''}" data-pfilter="all">Tümü (${h.total_live})</button>
-          <button class="${f === 'v6' ? 'active' : ''}" data-pfilter="v6">v6 Egress (${h.v6_count})</button>
-          <button class="${f === 'rotate' ? 'active' : ''}" data-pfilter="rotate">Rotate (${h.rotate_count})</button>
-          <button class="${f === 'v4' ? 'active' : ''}" data-pfilter="v4">v4 Egress (${h.v4_count})</button>
-          <button class="${f === 'socks_con' ? 'active' : ''}" data-pfilter="socks_con">SOCKS/CON (${h.socks_count + h.connect_count})</button>
-        </div>
-        <div class="bench-actions">
-          <button class="action-btn green" data-action="download-all">${icon('Download', 12)} Tümünü İndir</button>
-          <button class="action-btn" data-action="download-v6">${icon('Download', 12)} Sadece v6</button>
-          <button class="action-btn" data-action="download-rotate">${icon('Download', 12)} Rotate</button>
-          <button class="action-btn" data-action="refresh-harvest">${icon('RefreshCw', 12)}</button>
-        </div>
-      </div>
-
-      <div class="bench-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th style="width:190px">ENDPOINT (IP:PORT)</th>
-              <th style="width:110px">PROTOKOL</th>
-              <th style="width:90px">SÜRÜM</th>
-              <th style="width:80px">TÜR</th>
-              <th style="width:90px">ROTASYON</th>
-              <th>ÇIKIŞ (EGRESS IP)</th>
-              <th style="width:80px;text-align:right">İŞLEM</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${pageItems.length ? pageItems.map(p => `
-              <tr>
-                <td><code style="color:#57dfec;font-size:11px">${esc(p.endpoint)}</code></td>
-                <td><span class="badge badge-proto">${esc(p.protocol)}</span></td>
-                <td><span class="badge ${p.version === 'v6' ? 'badge-v6' : 'badge-v4'}">${esc(p.version.toUpperCase())}</span></td>
-                <td><span class="badge badge-type">${esc(p.type.toUpperCase())}</span></td>
-                <td><span class="badge ${p.rotation === 'rotate' ? 'badge-rotate' : 'badge-sabit'}">${esc(p.rotation)}</span></td>
-                <td><span style="color:#8b949e;font-size:10px">${esc(p.egress)}</span></td>
-                <td style="text-align:right"><button class="btn-copy" data-copy="${esc(p.endpoint)}">Kopyala</button></td>
-              </tr>
-            `).join('') : `<tr><td colspan="7" style="text-align:center;padding:30px;color:#6e7681">Filtreye uygun proxy bulunamadı</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="bench-foot">
-        <span>Sayfa ${state.proxyPage + 1} / ${totalPages} · Gösterilen: ${pageItems.length} / ${filtered.length} proxy · Tarama: ${esc(h.scan_progress)}</span>
-        <div style="display:flex;gap:4px">
-          <button class="btn-copy" data-action="prev-page" ${state.proxyPage === 0 ? 'disabled' : ''}>Önceki</button>
-          <button class="btn-copy" data-action="next-page" ${state.proxyPage >= totalPages - 1 ? 'disabled' : ''}>Sonraki</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const input = panel.querySelector<HTMLInputElement>('#bench-search-input');
-  if (input) {
-    input.oninput = () => {
-      state.proxySearch = input.value;
-      state.proxyPage = 0;
-      renderProxyBench();
-    };
-  }
-
-  panel.querySelectorAll<HTMLElement>('[data-pfilter]').forEach(b => {
-    b.onclick = () => {
-      state.proxyFilter = b.dataset.pfilter || 'all';
-      state.proxyPage = 0;
-      renderProxyBench();
-    };
-  });
-
-  panel.querySelectorAll<HTMLElement>('[data-copy]').forEach(b => {
-    b.onclick = async () => {
-      const ep = b.dataset.copy || '';
-      await navigator.clipboard.writeText(ep);
-      b.textContent = 'Kopyalandı!';
-      setTimeout(() => { b.textContent = 'Kopyala'; }, 1200);
-    };
-  });
-
-  const btnPrev = panel.querySelector<HTMLElement>('[data-action="prev-page"]');
-  if (btnPrev) btnPrev.onclick = () => { if (state.proxyPage > 0) { state.proxyPage--; renderProxyBench(); } };
-  const btnNext = panel.querySelector<HTMLElement>('[data-action="next-page"]');
-  if (btnNext) btnNext.onclick = () => { if (state.proxyPage < totalPages - 1) { state.proxyPage++; renderProxyBench(); } };
-
-  const btnDlAll = panel.querySelector<HTMLElement>('[data-action="download-all"]');
-  if (btnDlAll) btnDlAll.onclick = () => downloadCategory('all');
-  const btnDlv6 = panel.querySelector<HTMLElement>('[data-action="download-v6"]');
-  if (btnDlv6) btnDlv6.onclick = () => downloadCategory('v6');
-  const btnDlRot = panel.querySelector<HTMLElement>('[data-action="download-rotate"]');
-  if (btnDlRot) btnDlRot.onclick = () => downloadCategory('rotate');
-  const btnRef = panel.querySelector<HTMLElement>('[data-action="refresh-harvest"]');
-  if (btnRef) btnRef.onclick = () => void loadHarvestData(true);
-}
-
-function renderHarvesterBench() {
-  const panel = document.querySelector<HTMLElement>('#panel-harvester');
-  if (!panel || state.mainViewTab !== 'harvester') return;
-
-  const currentTargets = panel.querySelector<HTMLTextAreaElement>('#harv-targets')?.value;
-  if (typeof currentTargets === 'string') state.proxySearch = currentTargets; // temporary hold or keep state
-
-  panel.innerHTML = `
-    <div class="harvester-bench">
-      <div class="harvester-grid">
-        <div class="harvester-card">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <h3>HEDEF AĞLAR (ASN / CIDR / IP)</h3>
-            <button class="btn-copy" id="btn-clear-targets">Temizle</button>
-          </div>
-          <textarea id="harv-targets" placeholder="Taramak istediğiniz CIDR blokları veya IP aralıkları (her satıra bir adet)...&#10;Boş bırakırsanız mevcut hedef havuz taranır.">${esc(state.proxySearch || '')}</textarea>
-          
-          <div>
-            <label style="color:#768897;font-size:9px;text-transform:uppercase;letter-spacing:1px;font-weight:700">ÇAPA PORTLARI VEYA ÖZEL LİMAN</label>
-            <div class="ports-row" style="margin-top:4px">
-              <button class="port-toggle active" data-port="10000">10000</button>
-              <button class="port-toggle active" data-port="30000">30000</button>
-              <button class="port-toggle active" data-port="8080">8080</button>
-              <button class="port-toggle active" data-port="3128">3128</button>
-              <button class="port-toggle" data-port="8888">8888</button>
-              <button class="port-toggle" data-port="4145">4145</button>
-              <button class="port-toggle" data-port="10808">10808</button>
-            </div>
-            <div style="margin-top:6px">
-              <input id="custom-ports" style="width:100%;background:#080d12;border:1px solid #233342;border-radius:4px;padding:6px 8px;color:#e6edf3;font-size:11px" placeholder="Örn: 10000,20000 veya 10000-40000 (boşsa yukarıdaki çapa butonları geçerlidir)"/>
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:12px">
-            <span style="color:#768897;font-size:10px">HIZ (PPS):</span>
-            <input id="harv-rate" type="number" value="4000" min="500" max="100000" step="500" style="width:90px;background:#080d12;border:1px solid #233342;border-radius:4px;padding:4px 6px;color:#39df8e;font-size:11px;font-weight:700"/>
-            <small style="color:#6e7681;font-size:9px">4000pps = drop yok (güvenli)</small>
-          </div>
-
-          <div style="display:flex;gap:8px;margin-top:4px">
-            <button class="action-btn green" id="btn-start-anchor" style="padding:9px;justify-content:center;flex:1">${icon('Crosshair', 14)} ÇAPA TARAMASINI BAŞLAT</button>
-            <button class="action-btn" id="btn-stop-all" style="background:#3a151b;border-color:#7a2834;color:#ff8591;padding:9px 14px">${icon('Square', 12)} DURDUR</button>
-          </div>
-        </div>
-
-        <div class="harvester-card">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <h3>CANLI VDS OPERASYON AKIŞI</h3>
-            <span style="color:#39df8e;font-size:10px;font-weight:700">● CANLI</span>
-          </div>
-          <div class="harvester-log" id="harv-log">${esc(state.harvest.scan_log || state.harvest.scan_progress || 'Canlı operasyon logu bekleniyor...')}</div>
-          <button class="action-btn" id="btn-gen-check" style="padding:9px;justify-content:center">${icon('Zap', 14)} AÇIK PORTLARI 5 PROTOKOLLE DOĞRULA</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  panel.querySelectorAll<HTMLElement>('.port-toggle').forEach(btn => {
-    btn.onclick = () => btn.classList.toggle('active');
-  });
-
-  const btnClear = panel.querySelector<HTMLElement>('#btn-clear-targets');
-  if (btnClear) {
-    btnClear.onclick = () => {
-      const t = panel.querySelector<HTMLTextAreaElement>('#harv-targets');
-      if (t) { t.value = ''; state.proxySearch = ''; t.focus(); }
-    };
-  }
-
-  const btnStart = panel.querySelector<HTMLButtonElement>('#btn-start-anchor');
-  if (btnStart) {
-    btnStart.onclick = async () => {
-      const textarea = panel.querySelector<HTMLTextAreaElement>('#harv-targets');
-      const targets = textarea ? textarea.value.trim() : '';
-      const customPortsInput = panel.querySelector<HTMLInputElement>('#custom-ports');
-      const customPorts = customPortsInput ? customPortsInput.value.trim() : '';
-      const rateInput = panel.querySelector<HTMLInputElement>('#harv-rate');
-      const rate = rateInput ? Number(rateInput.value) || 4000 : 4000;
-
-      let ports = customPorts;
-      if (!ports) {
-        const activePorts: string[] = [];
-        panel.querySelectorAll<HTMLElement>('.port-toggle.active').forEach(b => {
-          if (b.dataset.port) activePorts.push(b.dataset.port);
-        });
-        ports = activePorts.join(',') || '10000,30000,8080,3128';
-      }
-
-      btnStart.disabled = true;
-      btnStart.textContent = 'VDS\'te Başlatılıyor...';
-      try {
-        const res = await call('start_anchor_scan', { targets, ports, rate });
-        setStatus(String(res?.message || 'Tarama VDS üzerinde başlatıldı'));
-        void loadHarvestData(true);
-      } catch (err) {
-        setStatus(`Hata: ${String(err)}`, true);
-      } finally {
-        btnStart.disabled = false;
-        btnStart.innerHTML = `${icon('Crosshair', 14)} ÇAPA TARAMASINI BAŞLAT`;
-      }
-    };
-  }
-
-  const btnStop = panel.querySelector<HTMLButtonElement>('#btn-stop-all');
-  if (btnStop) {
-    btnStop.onclick = async () => {
-      btnStop.disabled = true;
-      try {
-        const res = await call('stop_all_scans', {});
-        setStatus(String(res?.message || 'Tüm taramalar durduruldu'));
-        void loadHarvestData(true);
-      } catch (err) {
-        setStatus(`Hata: ${String(err)}`, true);
-      } finally {
-        btnStop.disabled = false;
-      }
-    };
-  }
-
-  const btnGen = panel.querySelector<HTMLButtonElement>('#btn-gen-check');
-  if (btnGen) {
-    btnGen.onclick = async () => {
-      btnGen.disabled = true;
-      btnGen.textContent = 'Doğrulayıcı Başlatılıyor...';
-      try {
-        const res = await call('start_gen_and_check', {});
-        setStatus(String(res?.message || 'Doğrulayıcı başlatıldı'));
-        void loadHarvestData(true);
-      } catch (err) {
-        setStatus(`Hata: ${String(err)}`, true);
-      } finally {
-        btnGen.disabled = false;
-        btnGen.innerHTML = `${icon('Zap', 14)} AÇIK PORTLARI 5 PROTOKOLLE DOĞRULA`;
-      }
-    };
-  }
-}
-
-async function loadHarvestData(force = false) {
-  try {
-    const res = await call('get_harvest_data', { force }, true);
-    if (res && res.ok !== false) {
-      state.harvest = {
-        open_ports: Number(res.open_ports || 0),
-        total_live: Number(res.total_live || 0),
-        v6_count: Number(res.v6_count || 0),
-        v4_count: Number(res.v4_count || 0),
-        rotate_count: Number(res.rotate_count || 0),
-        socks_count: Number(res.socks_count || 0),
-        connect_count: Number(res.connect_count || 0),
-        scan_progress: String(res.scan_progress || 'Tamamlandı'),
-        scan_log: String(res.scan_log || ''),
-        proxies: Array.isArray(res.proxies) ? res.proxies : [],
-      };
-      renderTopStats();
-      if (state.mainViewTab === 'proxies') renderProxyBench();
-      if (state.mainViewTab === 'harvester') renderHarvesterBench();
-      renderProxies();
-    }
-  } catch (err) {
-    // quiet
-  }
+  setStatus(`${proxies.length} doğrulanmış proxy export edildi`);
 }
 function renderEvents(){
   const list=document.querySelector('#event-list')!;
@@ -900,21 +498,6 @@ function showCreateModal(show=true){
     document.querySelectorAll('#create-kind .chip').forEach(c=>c.classList.toggle('active',(c as HTMLElement).dataset.kind==='gezinme'));
   }
 }
-function setViewTab(name: string) {
-  state.mainViewTab = name;
-  document.querySelectorAll<HTMLElement>('[data-view-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.viewTab === name));
-  const panels = ['proxies', 'harvester', 'live', 'evidence'];
-  panels.forEach(p => {
-    const el = document.querySelector<HTMLElement>(`#panel-${p}`);
-    if (el) el.hidden = p !== name;
-  });
-  if (name === 'proxies') renderProxyBench();
-  if (name === 'harvester') renderHarvesterBench();
-  if (name === 'live') {
-    void showLastFrameFallback();
-  }
-}
-
 function setTab(name:string){
   state.activeTab=name;
   document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',(x as HTMLElement).dataset.tab===name));
@@ -1114,11 +697,9 @@ function bind(){
   });
   document.querySelectorAll<HTMLElement>('[data-instruction]').forEach(el=>el.onclick=()=>sendInstruction(el.dataset.instruction!));
   document.querySelectorAll<HTMLElement>('[data-tab]').forEach(el=>el.onclick=()=>setTab(el.dataset.tab!));
-  document.querySelectorAll<HTMLElement>('[data-view-tab]').forEach(el=>el.onclick=()=>setViewTab(el.dataset.viewTab!));
-  setTab('activity');
+  setTab('live');
   document.querySelectorAll<HTMLElement>('[data-action]').forEach(el=>el.onclick=async(e:MouseEvent)=>{
     const action=el.dataset.action!;
-    if(action==='export-all') return downloadCategory('all');
     if(action==='palette') return showPalette();
     if(action==='palette-close') return showPalette(false);
     if(action==='create') return showCreateModal(true);
@@ -1220,9 +801,6 @@ async function refreshSlow(){
 appShell();
 // İlk frame tamamen yerleştikten sonra uzak bağlantıyı başlat; açılış ekranı ağ gecikmesine bağlanmaz.
 requestAnimationFrame(() => {
-  setViewTab('proxies');
-  void loadHarvestData(true);
-  window.setInterval(() => void loadHarvestData(), 3000);
   void refresh();
   window.setInterval(refresh,15000);
   window.setInterval(refreshSlow,2500);
