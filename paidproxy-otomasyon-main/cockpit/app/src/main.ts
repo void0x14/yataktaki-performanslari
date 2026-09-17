@@ -15,6 +15,8 @@ const state = {
   filter: 'all', eventFilter: 'all', activeTab: 'activity', pending: new Set<string>(),
   hasLiveImage: false, lastFrameAt: 0, liveFps: 0, liveResolution: '',
   zoom: 1, zoomX: 0, zoomY: 0, panning: false, panStartX: 0, panStartY: 0,
+  harvestProxies: [] as Agent[],
+  harvestStats: { open_ports: 0, total_live: 0, v6_count: 0, rotate_count: 0 },
 };
 let liveFrameQueued: {state?:string;detail?:string;width?:number;height?:number;image?:string;seq?:number;fps?:number;ts?:number} | null = null;
 let lastMouseSend = 0;
@@ -80,7 +82,7 @@ function appShell() {
         </div>
         <section class="replay"><div class="replay-head"><b>FRAME / REPLAY</b><span id="replay-position">Kayıt yok</span><div><button data-action="prev">${icon('ChevronLeft')}</button><button data-action="next">${icon('ChevronRight')}</button><button data-action="live" class="live-button">● Canlıya dön</button></div></div><div class="frame-strip" id="frame-strip"><div class="empty-frame">Gerçek frame event'i bekleniyor</div></div><div class="scrubber" id="scrubber" role="slider" aria-label="Zaman çizelgesi" tabindex="0"><div class="scrubber-track" id="scrubber-track"><div class="scrubber-fill" id="scrubber-fill"></div><div class="scrubber-thumb" id="scrubber-thumb"></div></div><input id="scrub" type="range" min="0" max="0" value="0" tabindex="-1"/></div></section>
         <section class="workspace">
-          <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button></div>
+          <div class="workspace-tabs"><button class="active" data-tab="activity">Ajan Aktiviteleri</button><button data-tab="proxies">Canlı Proxyler (<span id="tab-proxy-count">0</span>)</button><button data-tab="evidence">Kanıtlar</button><button data-tab="logs">Loglar</button></div>
           <div class="workspace-body"><div class="activity-pane"><div class="event-filters"><button class="active" data-event-filter="all">Tümü</button><button data-event-filter="thinking">Düşünce</button><button data-event-filter="intervention">Eylem</button><button data-event-filter="tool">Araç</button><button data-event-filter="error">Hata</button></div><div id="event-list" class="event-list"><div class="empty-event">Bir ajan seçildiğinde gerçek olay akışı burada görünür.</div></div></div><aside class="inspector"><div class="inspector-tabs"><b>Görüntü</b><span>Ham Veri</span><span>Analiz</span></div><div class="preview" id="preview" title="Büyütmek için tıkla"><img id="preview-img" alt="" hidden/><span id="preview-text">FRAME ÖNİZLEMESİ</span><span class="preview-hint" id="preview-hint" hidden>Büyüt ⤢</span></div><dl id="metadata"><div><dt>Zaman</dt><dd>—</dd></div><div><dt>Eylem</dt><dd>—</dd></div><div><dt>Ajan</dt><dd>—</dd></div><div><dt>Dosya</dt><dd>—</dd></div></dl></aside></div>
         </section>
       </section>
@@ -191,6 +193,15 @@ function renderHuntFacts(a: Agent) {
 function publishedProxies(): Agent[] {
   const seen = new Set<string>();
   const out: Agent[] = [];
+  for (const proxy of state.harvestProxies) {
+    const host = String(proxy.host || '');
+    const port = Number(proxy.port || 0);
+    if (!host || !port) continue;
+    const identity = `${host}:${port}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    out.push(proxy);
+  }
   for (const agent of state.agents) {
     for (const proxy of (Array.isArray(agent.published_proxies) ? agent.published_proxies : [])) {
       const host = String(proxy?.host || '');
@@ -206,16 +217,20 @@ function publishedProxies(): Agent[] {
   }
   return out;
 }
+
 function proxyLine(proxy: Agent): string {
-  return `${proxy.host}:${proxy.port}\t${proxy.protocol}\t${proxy.quality_label || 'unlabeled'}\t${proxy.validation_ref}`;
+  return `${proxy.host}:${proxy.port}`;
 }
+
 function renderProxies() {
   const list = document.querySelector('#proxy-list');
   const count = document.querySelector('#proxy-count');
-  if (!list || !count) return;
+  const tabCount = document.querySelector('#tab-proxy-count');
   const proxies = publishedProxies();
-  count.textContent = String(proxies.length);
-  list.innerHTML = proxies.length ? proxies.map(proxy => {
+  if (count) count.textContent = String(proxies.length);
+  if (tabCount) tabCount.textContent = String(proxies.length);
+  if (!list) return;
+  list.innerHTML = proxies.length ? proxies.slice(0, 100).map(proxy => {
     const line = proxyLine(proxy);
     return `<article class="proxy-row"><code>${esc(`${proxy.host}:${proxy.port}`)}</code><span>${esc(proxy.protocol)}</span><small>${esc(proxy.quality_label || 'doğrulandı')} · ${esc(proxy.validation_ref)}</small><button class="proxy-copy" data-proxy-copy="${esc(encodeURIComponent(line))}">Kopyala</button></article>`;
   }).join('') : '<div class="empty-event">Gerçek L7 + çıkış kanıtı bekleniyor.</div>';
@@ -223,16 +238,17 @@ function renderProxies() {
     const value = decodeURIComponent(button.dataset.proxyCopy || '');
     try {
       await navigator.clipboard.writeText(value);
-      setStatus('Doğrulanmış proxy panoya kopyalandı');
+      setStatus('Proxy panoya kopyalandı');
     } catch (error) {
       setStatus(`Kopyalama başarısız · ${String(error)}`, true);
     }
   });
 }
+
 function exportProxies() {
   const proxies = publishedProxies();
   if (!proxies.length) return setStatus('Export için doğrulanmış proxy yok', true);
-  const blob = new Blob([proxies.map(proxyLine).join('\n') + '\n'], {type:'text/plain;charset=utf-8'});
+  const blob = new Blob([proxies.map(p => `${p.host}:${p.port}`).join('\n') + '\n'], {type:'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -241,8 +257,70 @@ function exportProxies() {
   URL.revokeObjectURL(url);
   setStatus(`${proxies.length} doğrulanmış proxy export edildi`);
 }
+
+async function loadHarvestData(force = false) {
+  try {
+    const res = await call('get_harvest_data', { force }, true);
+    if (res && Array.isArray(res.proxies) && res.proxies.length) {
+      state.harvestProxies = res.proxies.map((p: any) => {
+        const parts = String(p.endpoint || '').split(':');
+        const host = parts[0] || '';
+        const port = Number(parts[1] || 0);
+        return {
+          host,
+          port,
+          protocol: p.protocol || 'HTTP',
+          quality_label: `${p.version || ''} ${p.rotation || ''} ${p.type || ''}`.trim(),
+          validation_ref: p.egress || 'egress-ok',
+          agent_id: 'harvest',
+        };
+      });
+      state.harvestStats = {
+        open_ports: Number(res.open_ports || 0),
+        total_live: Number(res.total_live || 0),
+        v6_count: Number(res.v6_count || 0),
+        rotate_count: Number(res.rotate_count || 0),
+      };
+      renderProxies();
+      if (state.activeTab === 'proxies') renderEvents();
+    }
+  } catch {}
+}
+
 function renderEvents(){
   const list=document.querySelector('#event-list')!;
+  if(state.activeTab==='proxies') {
+    const proxies=publishedProxies();
+    list.innerHTML=`
+      <div style="padding:6px;display:flex;flex-direction:column;gap:5px;height:100%">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #202c36">
+          <b style="color:#55dfeb;font-size:11px">CANLI DOĞRULANMIŞ HAVUZ (${proxies.length.toLocaleString()})</b>
+          <button class="proxy-export" data-action="proxy-export" style="width:auto;padding:3px 8px;font-size:9px">Listeyi İndir (.txt)</button>
+        </div>
+        <div style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:3px">
+          ${proxies.slice(0, 200).map(p => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 7px;background:#101a22;border:1px solid #24343f;border-radius:4px;font-size:10px;font-family:monospace">
+              <span style="color:#9bf1fa;font-weight:700">${esc(`${p.host}:${p.port}`)}</span>
+              <span style="color:#d4b66e">${esc(p.protocol)}</span>
+              <span style="color:#718491;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(p.quality_label || '')}</span>
+              <button class="proxy-copy" data-proxy-copy="${esc(encodeURIComponent(`${p.host}:${p.port}`))}" style="padding:2px 5px">Kopyala</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    list.querySelectorAll<HTMLElement>('[data-proxy-copy]').forEach(b => {
+      b.onclick = async () => {
+        const v = decodeURIComponent(b.dataset.proxyCopy || '');
+        await navigator.clipboard.writeText(v);
+        setStatus('Kopyalandı: ' + v);
+      };
+    });
+    list.querySelectorAll<HTMLElement>('[data-action="proxy-export"]').forEach(b => {
+      b.onclick = () => exportProxies();
+    });
+    return;
+  }
   if(state.activeTab==='logs') {
     list.innerHTML=`<pre class="raw-event">${esc(state.events.map(e=>JSON.stringify(e,null,2)).join('\n\n'))}</pre>`;
     renderFrames();
@@ -802,8 +880,10 @@ appShell();
 // İlk frame tamamen yerleştikten sonra uzak bağlantıyı başlat; açılış ekranı ağ gecikmesine bağlanmaz.
 requestAnimationFrame(() => {
   void refresh();
+  void loadHarvestData(true);
   window.setInterval(refresh,15000);
   window.setInterval(refreshSlow,2500);
+  window.setInterval(loadHarvestData,3000);
   window.setInterval(updateStreamStatus,1000);
 });
 // Pencere boyutlanınca layout'u zorlamadan tek RAF döngüsünde senkronize et:

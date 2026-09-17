@@ -19,59 +19,9 @@ def _get_harvest_data(cfg, force: bool = False) -> dict:
     if not force and _HARVEST_CACHE["data"] is not None and (now - _HARVEST_CACHE["ts"]) < 2.5:
         return _HARVEST_CACHE["data"]
 
-    cmd = """python3 -c "
-import os, json
-res = {
-    'ok': True,
-    'open_ports': 0,
-    'total_live': 0,
-    'v6_count': 0,
-    'v4_count': 0,
-    'rotate_count': 0,
-    'socks_count': 0,
-    'connect_count': 0,
-    'scan_progress': 'Tamamlandı',
-    'proxies': []
-}
-if os.path.exists('/tmp/harvest/pas1.hits'):
-    with open('/tmp/harvest/pas1.hits') as f:
-        res['open_ports'] = sum(1 for l in f if l.startswith('open'))
-if os.path.exists('/tmp/harvest/pas1.log'):
-    with open('/tmp/harvest/pas1.log') as f:
-        lines = f.read().splitlines()
-        res['scan_log'] = '\n'.join(lines[-20:])
-        for l in reversed(lines[-30:]):
-            if 'rate:' in l:
-                res['scan_progress'] = l.strip()
-                break
-if os.path.exists('/tmp/harvest/validated_pool.txt'):
-    with open('/tmp/harvest/validated_pool.txt') as f:
-        for line in f:
-            p = line.strip().split(maxsplit=5)
-            if len(p) >= 5:
-                proto = p[1]
-                ver = p[2]
-                org = p[3]
-                rot = p[4]
-                egress = p[5] if len(p) > 5 else ''
-                res['proxies'].append({
-                    'endpoint': p[0],
-                    'protocol': proto,
-                    'version': ver,
-                    'type': org,
-                    'rotation': rot,
-                    'egress': egress[:60]
-                })
-                res['total_live'] += 1
-                if ver == 'v6': res['v6_count'] += 1
-                elif ver == 'v4': res['v4_count'] += 1
-                if rot == 'rotate': res['rotate_count'] += 1
-                if 'SOCKS' in proto: res['socks_count'] += 1
-                if 'CON' in proto: res['connect_count'] += 1
-print(json.dumps(res, ensure_ascii=False))
-" """
+    cmd = "/home/mani/paidproxy-otomasyon/.venv/bin/python /tmp/harvest/status.py"
     try:
-        ret = run_remote(cfg, cmd, timeout=10)
+        ret = run_remote(cfg, cmd, timeout=8)
         data = json.loads(ret.stdout.strip())
         _HARVEST_CACHE["ts"] = now
         _HARVEST_CACHE["data"] = data
