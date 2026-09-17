@@ -28,6 +28,7 @@ const state = {
     socks_count: 0,
     connect_count: 0,
     scan_progress: 'Hazırlanıyor...',
+    scan_log: '',
     proxies: [] as Array<{
       endpoint: string;
       protocol: string;
@@ -482,45 +483,55 @@ function renderProxyBench() {
 function renderHarvesterBench() {
   const panel = document.querySelector<HTMLElement>('#panel-harvester');
   if (!panel || state.mainViewTab !== 'harvester') return;
+
+  const currentTargets = panel.querySelector<HTMLTextAreaElement>('#harv-targets')?.value;
+  if (typeof currentTargets === 'string') state.proxySearch = currentTargets; // temporary hold or keep state
+
   panel.innerHTML = `
     <div class="harvester-bench">
       <div class="harvester-grid">
         <div class="harvester-card">
-          <h3>HEDEF AĞLAR (ASN / CIDR)</h3>
-          <textarea id="harv-targets" placeholder="101.32.238.0/24 veya AS20473 vb.">
-43.159.91.0/24
-129.226.144.0/24
-139.59.0.0/16
-101.27.0.0/16
-121.18.0.0/16
-8.208.0.0/16
-207.148.64.0/20
-149.129.0.0/16</textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3>HEDEF AĞLAR (ASN / CIDR / IP)</h3>
+            <button class="btn-copy" id="btn-clear-targets">Temizle</button>
+          </div>
+          <textarea id="harv-targets" placeholder="Taramak istediğiniz CIDR blokları veya IP aralıkları (her satıra bir adet)...&#10;Boş bırakırsanız mevcut hedef havuz taranır.">${esc(state.proxySearch || '')}</textarea>
+          
           <div>
-            <label style="color:#768897;font-size:9px;text-transform:uppercase;letter-spacing:1px;font-weight:700">ÇAPA PORTLARI</label>
+            <label style="color:#768897;font-size:9px;text-transform:uppercase;letter-spacing:1px;font-weight:700">ÇAPA PORTLARI VEYA ÖZEL LİMAN</label>
             <div class="ports-row" style="margin-top:4px">
               <button class="port-toggle active" data-port="10000">10000</button>
               <button class="port-toggle active" data-port="30000">30000</button>
               <button class="port-toggle active" data-port="8080">8080</button>
               <button class="port-toggle active" data-port="3128">3128</button>
-              <button class="port-toggle active" data-port="8888">8888</button>
+              <button class="port-toggle" data-port="8888">8888</button>
               <button class="port-toggle" data-port="4145">4145</button>
               <button class="port-toggle" data-port="10808">10808</button>
             </div>
+            <div style="margin-top:6px">
+              <input id="custom-ports" style="width:100%;background:#080d12;border:1px solid #233342;border-radius:4px;padding:6px 8px;color:#e6edf3;font-size:11px" placeholder="Örn: 10000,20000 veya 10000-40000 (boşsa yukarıdaki çapa butonları geçerlidir)"/>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="color:#768897;font-size:10px">GÜVENLİ RATE: <b style="color:#39df8e">4000 pps</b> (Drop Yok)</span>
+
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="color:#768897;font-size:10px">HIZ (PPS):</span>
+            <input id="harv-rate" type="number" value="4000" min="500" max="100000" step="500" style="width:90px;background:#080d12;border:1px solid #233342;border-radius:4px;padding:4px 6px;color:#39df8e;font-size:11px;font-weight:700"/>
+            <small style="color:#6e7681;font-size:9px">4000pps = drop yok (güvenli)</small>
           </div>
-          <button class="action-btn green" id="btn-start-anchor" style="padding:10px;justify-content:center">${icon('Crosshair', 14)} ÇAPA TARAMASINI BAŞLAT</button>
+
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="action-btn green" id="btn-start-anchor" style="padding:9px;justify-content:center;flex:1">${icon('Crosshair', 14)} ÇAPA TARAMASINI BAŞLAT</button>
+            <button class="action-btn" id="btn-stop-all" style="background:#3a151b;border-color:#7a2834;color:#ff8591;padding:9px 14px">${icon('Square', 12)} DURDUR</button>
+          </div>
         </div>
 
         <div class="harvester-card">
-          <h3>CANLI OPERASYON AKIŞI</h3>
-          <div class="harvester-log" id="harv-log">Tarama durumu: ${esc(state.harvest.scan_progress)}
-Açık port havuzu: ${state.harvest.open_ports.toLocaleString()} port
-Doğrulanmış proxy: ${state.harvest.total_live.toLocaleString()} aktif uç
-Akış anlık olarak 5 protokolle (HTTP-FWD, HTTP-CON, SOCKS4, SOCKS5) test ediliyor.</div>
-          <button class="action-btn" id="btn-gen-check" style="padding:10px;justify-content:center">${icon('Zap', 14)} TÜM AÇIK PORTLARI GENLE & DOĞRULA</button>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3>CANLI VDS OPERASYON AKIŞI</h3>
+            <span style="color:#39df8e;font-size:10px;font-weight:700">● CANLI</span>
+          </div>
+          <div class="harvester-log" id="harv-log">${esc(state.harvest.scan_log || state.harvest.scan_progress || 'Canlı operasyon logu bekleniyor...')}</div>
+          <button class="action-btn" id="btn-gen-check" style="padding:9px;justify-content:center">${icon('Zap', 14)} AÇIK PORTLARI 5 PROTOKOLLE DOĞRULA</button>
         </div>
       </div>
     </div>
@@ -530,10 +541,81 @@ Akış anlık olarak 5 protokolle (HTTP-FWD, HTTP-CON, SOCKS4, SOCKS5) test edil
     btn.onclick = () => btn.classList.toggle('active');
   });
 
-  const btnStart = panel.querySelector<HTMLElement>('#btn-start-anchor');
-  if (btnStart) btnStart.onclick = () => setStatus('Çapa taraması VDS üzerinde başlatıldı · Drop koruması 4000pps devrede');
-  const btnGen = panel.querySelector<HTMLElement>('#btn-gen-check');
-  if (btnGen) btnGen.onclick = () => setStatus('Açık portlar 5 protokollü doğrulayıcıya sevk edildi');
+  const btnClear = panel.querySelector<HTMLElement>('#btn-clear-targets');
+  if (btnClear) {
+    btnClear.onclick = () => {
+      const t = panel.querySelector<HTMLTextAreaElement>('#harv-targets');
+      if (t) { t.value = ''; state.proxySearch = ''; t.focus(); }
+    };
+  }
+
+  const btnStart = panel.querySelector<HTMLButtonElement>('#btn-start-anchor');
+  if (btnStart) {
+    btnStart.onclick = async () => {
+      const textarea = panel.querySelector<HTMLTextAreaElement>('#harv-targets');
+      const targets = textarea ? textarea.value.trim() : '';
+      const customPortsInput = panel.querySelector<HTMLInputElement>('#custom-ports');
+      const customPorts = customPortsInput ? customPortsInput.value.trim() : '';
+      const rateInput = panel.querySelector<HTMLInputElement>('#harv-rate');
+      const rate = rateInput ? Number(rateInput.value) || 4000 : 4000;
+
+      let ports = customPorts;
+      if (!ports) {
+        const activePorts: string[] = [];
+        panel.querySelectorAll<HTMLElement>('.port-toggle.active').forEach(b => {
+          if (b.dataset.port) activePorts.push(b.dataset.port);
+        });
+        ports = activePorts.join(',') || '10000,30000,8080,3128';
+      }
+
+      btnStart.disabled = true;
+      btnStart.textContent = 'VDS\'te Başlatılıyor...';
+      try {
+        const res = await call('start_anchor_scan', { targets, ports, rate });
+        setStatus(String(res?.message || 'Tarama VDS üzerinde başlatıldı'));
+        void loadHarvestData(true);
+      } catch (err) {
+        setStatus(`Hata: ${String(err)}`, true);
+      } finally {
+        btnStart.disabled = false;
+        btnStart.innerHTML = `${icon('Crosshair', 14)} ÇAPA TARAMASINI BAŞLAT`;
+      }
+    };
+  }
+
+  const btnStop = panel.querySelector<HTMLButtonElement>('#btn-stop-all');
+  if (btnStop) {
+    btnStop.onclick = async () => {
+      btnStop.disabled = true;
+      try {
+        const res = await call('stop_all_scans', {});
+        setStatus(String(res?.message || 'Tüm taramalar durduruldu'));
+        void loadHarvestData(true);
+      } catch (err) {
+        setStatus(`Hata: ${String(err)}`, true);
+      } finally {
+        btnStop.disabled = false;
+      }
+    };
+  }
+
+  const btnGen = panel.querySelector<HTMLButtonElement>('#btn-gen-check');
+  if (btnGen) {
+    btnGen.onclick = async () => {
+      btnGen.disabled = true;
+      btnGen.textContent = 'Doğrulayıcı Başlatılıyor...';
+      try {
+        const res = await call('start_gen_and_check', {});
+        setStatus(String(res?.message || 'Doğrulayıcı başlatıldı'));
+        void loadHarvestData(true);
+      } catch (err) {
+        setStatus(`Hata: ${String(err)}`, true);
+      } finally {
+        btnGen.disabled = false;
+        btnGen.innerHTML = `${icon('Zap', 14)} AÇIK PORTLARI 5 PROTOKOLLE DOĞRULA`;
+      }
+    };
+  }
 }
 
 async function loadHarvestData(force = false) {
@@ -549,6 +631,7 @@ async function loadHarvestData(force = false) {
         socks_count: Number(res.socks_count || 0),
         connect_count: Number(res.connect_count || 0),
         scan_progress: String(res.scan_progress || 'Tamamlandı'),
+        scan_log: String(res.scan_log || ''),
         proxies: Array.isArray(res.proxies) ? res.proxies : [],
       };
       renderTopStats();
