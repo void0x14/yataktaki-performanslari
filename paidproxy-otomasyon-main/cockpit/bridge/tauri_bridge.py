@@ -64,21 +64,6 @@ def _start_gen_and_check(cfg, payload: dict) -> dict:
         return {"ok": False, "error": f"Tazelenemedi: {type(exc).__name__}: {exc}"}
 
 
-def _start_gen_and_check(cfg, payload: dict) -> dict:
-    cmd = """
-cd /tmp/harvest || exit 1
-awk '$1=="open"{print $4}' pas1.hits 2>/dev/null | sort -u > live_ips.txt
-TOTAL_IPS=$(wc -l < live_ips.txt 2>/dev/null || echo 0)
-pkill -f stream_validator 2>/dev/null || true
-sleep 1
-nohup ./stream_validator.sh > validator.log 2>&1 &
-echo "STARTED $TOTAL_IPS"
-"""
-    try:
-        ret = run_remote(cfg, cmd, timeout=10)
-        return {"ok": True, "message": f"Doğrulayıcı başlatıldı ({ret.stdout.strip()})"}
-    except Exception as exc:
-        return {"ok": False, "error": f"Doğrulama başlatılamadı: {type(exc).__name__}: {exc}"}
 
 
 def _stop_all_scans(cfg) -> dict:
