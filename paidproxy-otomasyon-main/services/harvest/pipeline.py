@@ -142,7 +142,19 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
     totals: dict[str, set] = {}
     scanned_ips = 0
     open_ports = 0
-
+    cycle = 0
+    while True:
+        try:
+            targets = engine.pick_targets(countries, max_asn_per_country=max_asn,
+                                          asn_offset=cycle)
+        except Exception as exc:
+            status.update(phase="retry", target=f"pick-hata:{type(exc).__name__}")
+            time.sleep(120)
+            continue
+        if not targets:
+            status.update(phase="idle", target="hedef-yok")
+            time.sleep(300)
+            continue
     while True:
         try:
             targets = engine.pick_targets(countries, max_asn_per_country=max_asn)
@@ -150,7 +162,6 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
             status.update(phase="retry", target=f"pick-hata:{type(exc).__name__}")
             time.sleep(120)
             continue
-        targets = engine.pick_targets(countries, max_asn_per_country=max_asn)
         if not targets:
             status.update(phase="idle", target="hedef-yok")
             time.sleep(300)
@@ -233,6 +244,7 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
         status.update(phase="cycle-done", scanned_ips=scanned_ips,
                       open_ports=open_ports,
                       live={k.replace(".txt", ""): len(v) for k, v in totals.items()})
+        cycle += 1
         time.sleep(60)
 
 

@@ -200,7 +200,7 @@ class TargetEngine:
     # ---------- Hedef seçimi ----------
 
     def pick_targets(self, countries: list[str], max_asn_per_country: int = 5,
-                     max_prefixes_per_asn: int = 20) -> list[dict]:
+                     max_prefixes_per_asn: int = 20, asn_offset: int = 0) -> list[dict]:
         """Ülke listesinden önceliklendirilmiş hedef paketi üret.
 
         Dönüş: [{"asn": int, "tier": str, "score": int, "holder": str,
@@ -217,7 +217,8 @@ class TargetEngine:
                 scored_raw = list(pool.map(self.score_asn, res["asn"][:200]))
             scored = [s for s in scored_raw if s["score"] > 0]
             scored.sort(key=lambda x: -x["score"])
-            for s in scored[:max_asn_per_country]:
+            start = asn_offset * max_asn_per_country
+            for s in scored[start:start + max_asn_per_country]:
                 try:
                     prefixes = self.announced_prefixes(s["asn"])
                 except Exception:
