@@ -66,7 +66,9 @@ class TargetEngine:
     def __init__(self, cache_db: str | Path = "var/harvest/ripe_cache.db") -> None:
         self.cache_path = Path(cache_db)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(self.cache_path))
+        self.db = sqlite3.connect(str(self.cache_path), check_same_thread=False)
+        import threading
+        self._db_lock = threading.Lock()
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, payload TEXT, ts REAL)"
         )
@@ -79,18 +81,32 @@ class TargetEngine:
 
     def _get(self, endpoint: str, ttl: float = 86400.0) -> dict:
         key = endpoint
-        row = self.db.execute("SELECT payload, ts FROM cache WHERE key=?", (key,)).fetchone()
+        with self._db_lock:
+            row = self.db.execute("SELECT payload, ts FROM cache WHERE key=?", (key,)).fetchone()
         if row and (time.time() - row[1]) < ttl:
             return json.loads(row[0])
         url = f"{RIPESTAT}/{endpoint}"
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                req = Request(url, headers={"Accept": "application/json", "User-Agent": "harvest/1.0"})
+                with urlopen(req, timeout=30) as resp:
+                    payload = json.loads(resp.read())
+                break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(2 * (attempt + 1))
+        else:
+            raise last_exc  # type: ignore[misc]
         req = Request(url, headers={"Accept": "application/json", "User-Agent": "harvest/1.0"})
         with urlopen(req, timeout=30) as resp:
             payload = json.loads(resp.read())
-        self.db.execute(
-            "INSERT OR REPLACE INTO cache (key, payload, ts) VALUES (?,?,?)",
-            (key, json.dumps(payload), time.time()),
-        )
-        self.db.commit()
+        with self._db_lock:
+            self.db.execute(
+                "INSERT OR REPLACE INTO cache (key, payload, ts) VALUES (?,?,?)",
+                (key, json.dumps(payload), time.time()),
+            )
+            self.db.commit()
         return payload
 
     # ---------- RIPEstat sorguları ----------
@@ -186,11 +202,10 @@ class TargetEngine:
                 res = self.country_resources(cc)
             except Exception:
                 continue
-            scored = []
-            for asn in res["asn"][:200]:  # ülke başı ilk 200 ASN adayı
-                s = self.score_asn(asn)
-                if s["score"] > 0:
-                    scored.append(s)
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                scored_raw = list(pool.map(self.score_asn, res["asn"][:200]))
+            scored = [s for s in scored_raw if s["score"] > 0]
             scored.sort(key=lambda x: -x["score"])
             for s in scored[:max_asn_per_country]:
                 try:
