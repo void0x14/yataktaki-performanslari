@@ -116,11 +116,13 @@ def pilot_sample(cidr: str, size: int = PILOT_SAMPLE) -> list[str]:
     total = net.num_addresses
     if total <= size:
         return [cidr]
-    hosts = list(net.hosts())
-    if len(hosts) <= size:
-        return [str(h) for h in hosts]
-    random.seed(int(net.network_address))
-    return [str(h) for h in random.sample(hosts, size)]
+    # Host listesini ASLA materyalize etme — /14'te 262k, /8'de 16M IP patlatır.
+    # Rastgele offset örnekleme: O(size) bellek, prefix boyutundan bağımsız.
+    base = int(net.network_address)
+    inner = max(1, total - 2)
+    random.seed(base)
+    picks = random.sample(range(1, inner + 1), min(size, inner))
+    return [str(ipaddress.ip_address(base + i)) for i in picks]
 
 
 def expand_ranges(cidr: str, chunk: int = EXPAND_CHUNK) -> list[str]:
