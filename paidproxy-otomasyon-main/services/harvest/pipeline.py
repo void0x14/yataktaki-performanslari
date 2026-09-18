@@ -144,6 +144,12 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
     open_ports = 0
 
     while True:
+        try:
+            targets = engine.pick_targets(countries, max_asn_per_country=max_asn)
+        except Exception as exc:
+            status.update(phase="retry", target=f"pick-hata:{type(exc).__name__}")
+            time.sleep(120)
+            continue
         targets = engine.pick_targets(countries, max_asn_per_country=max_asn)
         if not targets:
             status.update(phase="idle", target="hedef-yok")
@@ -153,6 +159,8 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
         for t in targets:
             tier_ports = TIER_PORTS.get(t["tier"], TIER_PORTS["default"])
             for cidr in t["prefixes"]:
+              try:
+                ports_key = ",".join(map(str, tier_ports))
                 ports_key = ",".join(map(str, tier_ports))
                 if ledger.is_scanned(cidr, ports_key):
                     continue
@@ -215,6 +223,10 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                 status.update(phase="deliver", target=cidr,
                               scanned_ips=scanned_ips, open_ports=open_ports,
                               live=live_now)
+              except Exception as exc:
+                status.update(phase="target-error", target=cidr,
+                              asn=f"{type(exc).__name__}")
+                continue
 
         if once:
             break

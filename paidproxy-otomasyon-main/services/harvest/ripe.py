@@ -134,7 +134,10 @@ class TargetEngine:
         """ASN'i kokuya göre puanla. Ölü zemin -> score -1 (asla tarama)."""
         if asn in DEAD_ASNS:
             return {"asn": asn, "score": -1, "tier": "dead", "holder": "dead-asn"}
-        holder = self.as_overview(asn)["holder"].lower()
+        try:
+            holder = self.as_overview(asn)["holder"].lower()
+        except Exception:
+            return {"asn": asn, "score": 0, "tier": "unknown", "holder": "fetch-error"}
         if any(k in holder for k in DEAD_HOLDER_KEYWORDS):
             return {"asn": asn, "score": -1, "tier": "dead", "holder": holder}
 
