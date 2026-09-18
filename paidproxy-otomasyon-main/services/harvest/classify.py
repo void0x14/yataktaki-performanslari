@@ -70,6 +70,7 @@ async def _http_fwd_probe(ip: str, port: int, host: str, timeout: float) -> tupl
             ipaddress.ip_address(candidate)
             return True, candidate
         except ValueError:
+            return False, None  # 200 ama gövde IP değil — Webmin/panel, proxy DEĞİL
             return True, None  # 200 ama gövde parse edilemedi — proxy canlı
     except (asyncio.TimeoutError, ConnectionError, OSError):
         return False, None
