@@ -42,6 +42,14 @@ DEAD_HOLDER_KEYWORDS = (
     "cloudflare", "google", "microsoft", "azure", "amazon", "aws",
     "facebook", "apple", "netflix", "akamai", "github", "incapsula",
     "bank", "ministry", "government", "defence", "defense", "military",
+    # Savunma sanayii (AS106 General Dynamics kaçağından)
+    "general dynamics", "lockheed", "raytheon", "northrop", "grumman",
+    "bae systems", "boeing", "l3harris", "leidos", "saic", "mantech",
+    "caci", "booz allen", "aerospace", "mission systems", "ordnance",
+    "arsenal", "navy", "army", "air force", "airforce", "marines",
+    "pentagon", "dod", "nasa", "space force", "homeland",
+    "aselsan", "roketsan", "havelsan", "tubitak", "tai ",
+    "university", "universit", "edu ",  # kampüs ağları — av değeri sıfır, abuse riski yüksek
 )
 
 # Koku tetikleyicileri (Yapı Taşı 1)
