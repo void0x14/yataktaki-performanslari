@@ -44,6 +44,26 @@ async def _read_until(reader: asyncio.StreamReader, marker: bytes,
     except (asyncio.TimeoutError, ConnectionError, OSError):
         pass
     return buf
+    return buf
+
+
+async def _read_body(reader: asyncio.StreamReader,
+                     limit: int = 4096, timeout: float = 1.5) -> bytes:
+    """Gövdeyi bağlantı kapanana/limit/timeout'a kadar oku.
+
+    _read_until(reader, b"") ÇAĞRISI YASAK: boş marker her buffer'da 'var'
+    sayılır, döngü hiç çalışmaz, gövde hep boş döner (29k açık portun
+    sıfır doğrulanmasının kök nedeni)."""
+    buf = b""
+    try:
+        while len(buf) < limit:
+            chunk = await asyncio.wait_for(reader.read(1024), timeout)
+            if not chunk:
+                break
+            buf += chunk
+    except (asyncio.TimeoutError, ConnectionError, OSError):
+        pass
+    return buf
 
 
 async def _http_fwd_probe(ip: str, port: int, host: str, timeout: float) -> tuple[bool, str | None]:
@@ -60,10 +80,12 @@ async def _http_fwd_probe(ip: str, port: int, host: str, timeout: float) -> tupl
         raw = await _read_until(reader, b"\r\n\r\n", timeout=timeout)
         if not raw.startswith(b"HTTP/"):
             return False, None
-        status = raw.split(b" ", 2)[1] if b" " in raw else b""
+        head, _, body = raw.partition(b"\r\n\r\n")
+        status = head.split(b" ", 2)[1] if b" " in head else b""
         if status.startswith(b"4") or status.startswith(b"5"):
             return False, None
-        body = await _read_until(reader, b"", limit=4096, timeout=timeout)
+        if len(body) < 7:  # IP henüz gelmediyse kalanını oku
+            body += await _read_body(reader, limit=4096 - len(body), timeout=timeout)
         text = body.decode("latin1", errors="replace").strip()
         candidate = text.split()[-1] if text else ""
         try:
@@ -71,7 +93,6 @@ async def _http_fwd_probe(ip: str, port: int, host: str, timeout: float) -> tupl
             return True, candidate
         except ValueError:
             return False, None  # 200 ama gövde IP değil — Webmin/panel, proxy DEĞİL
-            return True, None  # 200 ama gövde parse edilemedi — proxy canlı
     except (asyncio.TimeoutError, ConnectionError, OSError):
         return False, None
     finally:
@@ -143,7 +164,9 @@ async def _egress_via_tunnel(reader, writer, host: str, timeout: float) -> str |
         raw = await _read_until(reader, b"\r\n\r\n", timeout=timeout)
         if not raw.startswith(b"HTTP/"):
             return None
-        body = await _read_until(reader, b"", limit=4096, timeout=timeout)
+        _, _, body = raw.partition(b"\r\n\r\n")
+        if len(body) < 7:
+            body += await _read_body(reader, limit=4096 - len(body), timeout=timeout)
         candidate = body.decode("latin1", errors="replace").strip().split()
         for token in reversed(candidate):
             try:
