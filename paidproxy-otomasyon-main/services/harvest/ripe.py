@@ -192,10 +192,10 @@ class TargetEngine:
     def record_hit(self, asn: int, yield_count: int) -> None:
         with self._db_lock:
             self.db.execute(
-                """INSERT INTO hits (asn, last_hit, yield_count) VALUES (?,?,1)
+                """INSERT INTO hits (asn, last_hit, yield_count) VALUES (?,?,?)
                    ON CONFLICT(asn) DO UPDATE SET last_hit=excluded.last_hit,
                    yield_count=yield_count+?""",
-                (asn, time.time(), yield_count),
+                (asn, time.time(), yield_count, yield_count),
             )
             self.db.commit()
 
