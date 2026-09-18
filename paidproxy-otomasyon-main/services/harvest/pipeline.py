@@ -207,18 +207,6 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                 verdicts = asyncio.run(classify_batch(all_hits, concurrency=500, timeout=3.5))
                 buckets = bucket_files(verdicts)
 
-                # Canlı kanıt akışı (egress/latency) — kokpit status.py okur
-                with (workdir / "var/harvest/live.jsonl").open("a", encoding="utf-8") as fh:
-                    for v in verdicts:
-                        if v.alive and v.bucket:
-                            fh.write(json.dumps({
-                                "ip": v.ip, "port": v.port,
-                                "protocol": v.protocol, "bucket": v.bucket,
-                                "egress": v.egress_ip or "",
-                                "latency_ms": round(v.latency_ms),
-                                "ts": int(time.time()),
-                            }, ensure_ascii=False) + "\n")
-
                 # --- Aşama 6: Teslim (saf ip:port, kova adında tür) ---
                 live_now = {}
                 for fname, lines in buckets.items():

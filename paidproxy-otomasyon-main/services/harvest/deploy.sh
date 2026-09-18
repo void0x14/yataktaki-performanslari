@@ -8,21 +8,17 @@ KEY="$HOME/.ssh/paidproxy_vds"
 REMOTE_DIR="/home/mani/harvest"
 
 echo "=== 1/4: Paket gönderimi ==="
+ssh -i "$KEY" -o ConnectTimeout=20 "$VDS" "mkdir -p $REMOTE_DIR/var/harvest $REMOTE_DIR/var/teslim"
 scp -i "$KEY" -o ConnectTimeout=20 \
   services/harvest/__init__.py \
   services/harvest/ripe.py \
   services/harvest/classify.py \
   services/harvest/pipeline.py \
   services/harvest/status.py \
-  "$VDS:/tmp/harvest_pkg/" 2>/dev/null || {
-    ssh -i "$KEY" "$VDS" "mkdir -p /tmp/harvest_pkg $REMOTE_DIR"
-    scp -i "$KEY" services/harvest/{__init__,ripe,classify,pipeline,status}.py "$VDS:/tmp/harvest_pkg/"
-  }
+  "$VDS:$REMOTE_DIR/"
 
 echo "=== 2/4: Yerleştirme + dizinler ==="
 ssh -i "$KEY" "$VDS" "
-  mkdir -p $REMOTE_DIR /home/mani/harvest/var/harvest /home/mani/harvest/var/teslim
-  cp /tmp/harvest_pkg/*.py $REMOTE_DIR/
   chmod +x $REMOTE_DIR/pipeline.py
   which masscan >/dev/null || echo 'UYARI: masscan yok — sudo apt install -y masscan'
   python3 -c 'import ast; [ast.parse(open(f).read()) for f in [\"$REMOTE_DIR/ripe.py\",\"$REMOTE_DIR/classify.py\",\"$REMOTE_DIR/pipeline.py\"]]; print(\"uzak sözdizimi OK\")'
