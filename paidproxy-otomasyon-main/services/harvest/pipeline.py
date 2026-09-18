@@ -1,11 +1,11 @@
 """Harvest orkestratörü — 7/24 otonom hasat döngüsü (VDS tarafı, stdlib-only).
 
-Döngü (specs/otonom-avci-ve-saha-verisi-mimarisi.md 10 Yapı Taşı):
+Döngü — KURAL: masscan SADECE çapa portlarını tarar (10K/30K/60K), aralık yasak:
   1. TargetEngine.pick_targets()  — ülke/ASN/prefix, koku skoru, ölü zemin yasağı
-  2. Pilot ısırık — prefix'in örneklem dilimine kokuya uygun TEK ilk diş
-  3. Genleme     — canlı damar → range tamamı + çapa port ailesi
-  4. Kovan       — çapa veren IP'lere 10000-40000 genleme
-  5. Sınıflandır — 5-protokol + egress (v6/rotate/v4) kovalama
+  2. Pilot ısırık — çapa portlarıyla örneklem dilimi
+  3. Yayılma     — yine SADECE çapa portları (masscanda aralık YOK)
+  4. GENLE       — canlı IP × 10000-65000 adayları script tarafında üretilir
+  5. CHECK       — xRisky tarzı ALL-TYPE proxy checker doğrular
   6. Teslim      — var/teslim/<kova>.txt (saf ip:port), status.json
   7. Ledger      — mükerrer tarama yasağı, kardeş damar kaydı
 
@@ -25,22 +25,18 @@ import time
 from pathlib import Path
 
 from ripe import TargetEngine
-from classify import classify_batch, bucket_files
+from checker import run_batch as checker_batch
 
-# Kokuya göre ilk diş — SADECE 5-6 haneli portlar (10000-65535).
-# 4 haneli port (3128, 8080, 1080...) lamer portudur: reputation'ı düşük,
-# ömrü saatlik, her script kiddie oraya bakar. Gerçek kuyu 5-6 hanededir.
-TIER_PORTS = {
-    "P1": [10808, 10809, 10000, 12000, 20000, 31280],  # hosting/VPS — 10808 v2ray damarı kanıtlı
-    "P2": [10808, 30000, 40000, 45000],                # kurumsal/statik
-    "P3": [10808, 50000, 60000, 61000, 62000],         # residential/CPE
-    "default": [10808, 10809, 10000, 12000, 20000, 30000, 40000, 50000, 60000],
-}
-FARM_EXPANSION = (10000, 65535)   # 5 hanenin TAMAMI — 40000 kesme kör noktası kaldırıldı
-FARM_FULL_MAX = 24                # tam süpürme yapılacak lider çiftlik sayısı/tur
-FARM_FULL_MAX = 24                # tam aralık (30k port) genlenecek lider çiftlik sayısı/tur
+# KURAL: masscan SADECE çapa portlarını tarar — 10K / 30K / 60K.
+# Aralık taraması YASAK. Genleme (10000-65000 aday üretimi) script tarafında,
+# doğrulama xRisky tarzı ALL-TYPE proxy checker ile yapılır.
+ANCHOR_PORTS = [10000, 30000, 60000]
 PILOT_SAMPLE = 256                # pilot ısırık örneklem boyutu
-EXPAND_CHUNK = 65536              # genleme masscan parça boyutu (IP sayısı)
+EXPAND_CHUNK = 65536              # yayılma masscan parça boyutu (IP sayısı)
+GEN_PORT_LOW = 10000              # genleme aralığı: 55.000 aday/IP
+GEN_PORT_HIGH = 65000
+GEN_MAX_IPS = 24                  # tur başına genlenecek canlı IP sayısı
+CHECK_BATCH = 50_000              # tur başına checkera verilecek aday
 
 
 class Ledger:
@@ -150,8 +146,14 @@ def _merge_farms(workdir: Path, pairs: list[tuple[str, int]],
     if verdicts:
         verified: dict[str, int] = {}
         for v in verdicts:
-            if getattr(v, "alive", False):
-                verified[v.ip] = verified.get(v.ip, 0) + 1
+            if isinstance(v, dict):
+                ip = str(v.get("endpoint", "")).rpartition(":")[0]
+                if ip:
+                    verified[ip] = verified.get(ip, 0) + 1
+            elif getattr(v, "alive", False):
+                ip = str(getattr(v, "ip", ""))
+                if ip:
+                    verified[ip] = verified.get(ip, 0) + 1
         for ip, n in verified.items():
             rec = report.get(ip)
             if not isinstance(rec, dict):
@@ -174,6 +176,24 @@ def _merge_farms(workdir: Path, pairs: list[tuple[str, int]],
     except OSError:
         pass
 
+
+def genle(workdir: Path, ips: list[str]) -> int:
+    """GENLEME: canlı IP × 10000-65000 adaylarını havuza yaz (masscan YOK).
+
+    Kural birebir: masscan sadece çapa portlarını tarar; 10K-65K genlemesi
+    script tarafında aday üretimidir, doğrulaması checker'a aittir.
+    """
+    path = workdir / "var/harvest/gen_queue.txt"
+    count = 0
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            for ip in ips:
+                for port in range(GEN_PORT_LOW, GEN_PORT_HIGH):
+                    fh.write(f"{ip}:{port}\n")
+                    count += 1
+    except OSError:
+        return 0
+    return count
 
 def pilot_sample(cidr: str, size: int = PILOT_SAMPLE) -> list[str]:
     """Devasa bloğa körü körüne girilmez — örneklem dilimi (Yapı Taşı 4)."""
@@ -224,18 +244,17 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
             continue
 
         for t in targets:
-            tier_ports = TIER_PORTS.get(t["tier"], TIER_PORTS["default"])
             for cidr in t["prefixes"]:
               try:
-                ports_key = ",".join(map(str, tier_ports))
+                ports_key = ",".join(map(str, ANCHOR_PORTS))
                 if ledger.is_scanned(cidr, ports_key):
                     continue
 
-                # --- Aşama 2: Pilot ısırık ---
+                # --- Aşama 2: Pilot ısırık (SADECE çapa portları: 10K/30K/60K) ---
                 sample = pilot_sample(cidr)
                 status.update(phase="pilot", target=cidr,
                               asn=f"AS{t['asn']}", tier=t["tier"], rate_pps=rate)
-                hits = masscan(sample, tier_ports[:1], rate)  # tek ilk diş
+                hits = masscan(sample, ANCHOR_PORTS, rate)
                 scanned_ips += len(sample)
 
                 if not hits:
@@ -244,10 +263,10 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                                   scanned_ips=scanned_ips)
                     continue
 
-                # --- Aşama 3: Damar canlı → genleme ---
+                # --- Aşama 3: Yayılma (yine SADECE çapa portları — aralık YOK) ---
                 status.update(phase="expand", target=cidr, scanned_ips=scanned_ips)
                 chunks = expand_ranges(cidr)
-                hits = masscan(chunks, tier_ports, rate)
+                hits = masscan(chunks, ANCHOR_PORTS, rate)
                 scanned_ips += sum(
                     ipaddress.ip_network(c, strict=False).num_addresses for c in chunks
                 )
@@ -257,40 +276,30 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                 if not hits:
                     continue
 
-                # --- Aşama 4: Kovan genleme (çapa veren IP'ler) ---
-                # 5 hanenin TAMAMI süpürülür (10000-65535). Lider çiftliklere tam
-                # aralık; kalanlara hızlı örnek (sonraki turlarda lidere terfi eder).
+                # --- Aşama 4: GENLE — canlı IP × 10000-65000 adayları (script üretimi) ---
                 farm_ips = sorted({ip for ip, _ in hits})
-                lo, hi = FARM_EXPANSION
-                leaders = farm_ips[:FARM_FULL_MAX]
-                kalan = farm_ips[FARM_FULL_MAX:]
-                farm_hits = masscan(leaders, f"{lo}-{hi}", rate) if leaders else []
-                if kalan:
-                    farm_hits += masscan(kalan, list(range(lo, hi + 1, 25)), rate)
-                all_hits = sorted(set(hits) | set(farm_hits))
-                open_ports += len(farm_hits)
+                uretilen = genle(workdir, farm_ips[:GEN_MAX_IPS])
+                status.update(phase="genle", target=cidr, scanned_ips=scanned_ips,
+                              open_ports=open_ports, asn=f"uretildi:{uretilen}")
 
-                # --- Aşama 5: Sınıflandırma ---
-                status.update(phase="classify", target=cidr,
-                              open_ports=open_ports, scanned_ips=scanned_ips)
-                verdicts = asyncio.run(classify_batch(all_hits, concurrency=500, timeout=3.5))
-                buckets = bucket_files(verdicts)
+                # --- Aşama 5: CHECK — xRisky tarzı ALL-TYPE proxy checker ---
+                status.update(phase="check", target=cidr, scanned_ips=scanned_ips,
+                              open_ports=open_ports)
+                stats = checker_batch(workdir, limit=CHECK_BATCH)
+                _merge_farms(workdir, hits, stats.get("verified") or [])
+                engine.record_hit(t["asn"], int(stats.get("alive", 0)))
 
-                # --- Aşama 6: Teslim (saf ip:port, kova adında tür) ---
+                # --- Aşama 6: Teslim raporu (kovaları checker yazar) ---
                 live_now = {}
-                for fname, lines in buckets.items():
-                    kova = teslim / fname
-                    existing = set()
-                    if kova.exists():
-                        existing = set(kova.read_text().split())
-                    new = existing | set(lines)
-                    kova.write_text("\n".join(sorted(new)) + "\n")
-                    live_now[fname.replace(".txt", "")] = len(new)
-                    totals.setdefault(fname, set()).update(lines)
-
-                _merge_farms(workdir, all_hits, verdicts)
-                alive_count = sum(1 for v in verdicts if v.alive)
-                engine.record_hit(t["asn"], alive_count)
+                if teslim.is_dir():
+                    for f in sorted(teslim.glob("*.txt")):
+                        try:
+                            n = sum(1 for ln in f.read_text().splitlines() if ln.strip())
+                        except OSError:
+                            continue
+                        if n:
+                            live_now[f.stem] = n
+                            totals.setdefault(f.name, set()).update(range(n))
                 status.update(phase="deliver", target=cidr,
                               scanned_ips=scanned_ips, open_ports=open_ports,
                               live=live_now)

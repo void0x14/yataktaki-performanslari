@@ -13,6 +13,7 @@ scp -i "$KEY" -o ConnectTimeout=20 \
   services/harvest/__init__.py \
   services/harvest/ripe.py \
   services/harvest/classify.py \
+  services/harvest/checker.py \
   services/harvest/pipeline.py \
   services/harvest/status.py \
   "$VDS:$REMOTE_DIR/"

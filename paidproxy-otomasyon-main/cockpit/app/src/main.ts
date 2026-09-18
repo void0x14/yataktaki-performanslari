@@ -502,14 +502,10 @@ function renderHarvesterBench() {
             <div class="ports-row" style="margin-top:4px">
               <button class="port-toggle active" data-port="10000">10000</button>
               <button class="port-toggle active" data-port="30000">30000</button>
-              <button class="port-toggle active" data-port="8080">8080</button>
-              <button class="port-toggle active" data-port="3128">3128</button>
-              <button class="port-toggle" data-port="8888">8888</button>
-              <button class="port-toggle" data-port="4145">4145</button>
-              <button class="port-toggle" data-port="10808">10808</button>
+              <button class="port-toggle active" data-port="60000">60000</button>
             </div>
             <div style="margin-top:6px">
-              <input id="custom-ports" style="width:100%;background:#080d12;border:1px solid #233342;border-radius:4px;padding:6px 8px;color:#e6edf3;font-size:11px" placeholder="Örn: 10000,20000 veya 10000-40000 (boşsa yukarıdaki çapa butonları geçerlidir)"/>
+              <input id="custom-ports" style="width:100%;background:#080d12;border:1px solid #233342;border-radius:4px;padding:6px 8px;color:#e6edf3;font-size:11px" placeholder="Örn: 10000,30000,60000 (boşsa yukarıdaki çapa butonları geçerlidir)"/>
             </div>
           </div>
 
@@ -531,7 +527,7 @@ function renderHarvesterBench() {
             <span style="color:#39df8e;font-size:10px;font-weight:700">● CANLI</span>
           </div>
           <div class="harvester-log" id="harv-log">${esc(state.harvest.scan_log || state.harvest.scan_progress || 'Canlı operasyon logu bekleniyor...')}</div>
-          <button class="action-btn" id="btn-gen-check" style="padding:9px;justify-content:center">${icon('Zap', 14)} AÇIK PORTLARI 5 PROTOKOLLE DOĞRULA</button>
+          <button class="action-btn" id="btn-gen-check" style="padding:9px;justify-content:center">${icon('Zap', 14)} GENLE & CHECK (PROXY CHECKER)</button>
         </div>
       </div>
     </div>
@@ -565,7 +561,7 @@ function renderHarvesterBench() {
         panel.querySelectorAll<HTMLElement>('.port-toggle.active').forEach(b => {
           if (b.dataset.port) activePorts.push(b.dataset.port);
         });
-        ports = activePorts.join(',') || '10000,30000,8080,3128';
+        ports = activePorts.join(',') || '10000,30000,60000';
       }
 
       btnStart.disabled = true;
