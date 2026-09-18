@@ -31,10 +31,10 @@ from classify import classify_batch, bucket_files
 # 4 haneli port (3128, 8080, 1080...) lamer portudur: reputation'ı düşük,
 # ömrü saatlik, her script kiddie oraya bakar. Gerçek kuyu 5-6 hanededir.
 TIER_PORTS = {
-    "P1": [10000, 12000, 20000, 31280],      # hosting/VPS — 5 haneli Squid kovanı
-    "P2": [30000, 40000, 45000],             # kurumsal/statik — unutulmuş 5 haneli
-    "P3": [50000, 60000, 61000, 62000],      # residential/CPE — yüksek dinamik bant
-    "default": [10000, 12000, 20000, 30000, 40000, 50000, 60000],
+    "P1": [10808, 10809, 10000, 12000, 20000, 31280],  # hosting/VPS — 10808 v2ray damarı kanıtlı
+    "P2": [10808, 30000, 40000, 45000],                # kurumsal/statik
+    "P3": [10808, 50000, 60000, 61000, 62000],         # residential/CPE
+    "default": [10808, 10809, 10000, 12000, 20000, 30000, 40000, 50000, 60000],
 }
 FARM_EXPANSION = (10000, 40000)   # çapa veren IP'nin genlenecek port aralığı
 PILOT_SAMPLE = 256                # pilot ısırık örneklem boyutu
