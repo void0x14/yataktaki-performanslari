@@ -204,7 +204,7 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                 # --- Aşama 5: Sınıflandırma ---
                 status.update(phase="classify", target=cidr,
                               open_ports=open_ports, scanned_ips=scanned_ips)
-                verdicts = asyncio.run(classify_batch(all_hits, concurrency=500))
+                verdicts = asyncio.run(classify_batch(all_hits, concurrency=500, timeout=3.5))
                 buckets = bucket_files(verdicts)
 
                 # --- Aşama 6: Teslim (saf ip:port, kova adında tür) ---

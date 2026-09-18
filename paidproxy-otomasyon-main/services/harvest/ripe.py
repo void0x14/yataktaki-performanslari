@@ -215,8 +215,17 @@ class TargetEngine:
             except Exception:
                 continue
             from concurrent.futures import ThreadPoolExecutor
+            asn_pool = list(res["asn"][:200])
+            # Kanıtlı damarlar her zaman aday havuzunda — RIPEstat ilk-200
+            # dilimi yüksek numaralı kanıtlı ASN'leri asla skoramaz (AS132203
+            # Tencent, AS45102 Alibaba kaçağı).
+            with self._db_lock:
+                veins = [r[0] for r in self.db.execute(
+                    "SELECT asn FROM hits WHERE yield_count > 0")]
+            asn_set = set(asn_pool)
+            asn_pool.extend(a for a in veins if a in res["asn"] and a not in asn_set)
             with ThreadPoolExecutor(max_workers=6) as pool:
-                scored_raw = list(pool.map(self.score_asn, res["asn"][:200]))
+                scored_raw = list(pool.map(self.score_asn, asn_pool))
             scored = [s for s in scored_raw if s["score"] > 0]
             scored.sort(key=lambda x: -x["score"])
             start = asn_offset * max_asn_per_country
