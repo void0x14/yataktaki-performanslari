@@ -168,9 +168,10 @@ class TargetEngine:
             score = max(score, 20)
 
         # Kardeş damar bonusu: daha önce isabet alınan ASN
-        row = self.db.execute(
-            "SELECT last_hit, yield_count FROM hits WHERE asn=?", (asn,)
-        ).fetchone()
+        with self._db_lock:
+            row = self.db.execute(
+                "SELECT last_hit, yield_count FROM hits WHERE asn=?", (asn,)
+            ).fetchone()
         if row and row[1] > 0:
             score += min(50, row[1] * 5)
             if time.time() - row[0] < 86400 * 3:
@@ -179,13 +180,14 @@ class TargetEngine:
         return {"asn": asn, "score": score, "tier": tier, "holder": holder}
 
     def record_hit(self, asn: int, yield_count: int) -> None:
-        self.db.execute(
-            """INSERT INTO hits (asn, last_hit, yield_count) VALUES (?,?,1)
-               ON CONFLICT(asn) DO UPDATE SET last_hit=excluded.last_hit,
-               yield_count=yield_count+?""",
-            (asn, time.time(), yield_count),
-        )
-        self.db.commit()
+        with self._db_lock:
+            self.db.execute(
+                """INSERT INTO hits (asn, last_hit, yield_count) VALUES (?,?,1)
+                   ON CONFLICT(asn) DO UPDATE SET last_hit=excluded.last_hit,
+                   yield_count=yield_count+?""",
+                (asn, time.time(), yield_count),
+            )
+            self.db.commit()
 
     # ---------- Hedef seçimi ----------
 
