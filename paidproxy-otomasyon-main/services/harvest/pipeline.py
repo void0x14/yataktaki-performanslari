@@ -27,12 +27,14 @@ from pathlib import Path
 from ripe import TargetEngine
 from classify import classify_batch, bucket_files
 
-# Kokuya göre ilk diş (Yapı Taşı 5)
+# Kokuya göre ilk diş — SADECE 5-6 haneli portlar (10000-65535).
+# 4 haneli port (3128, 8080, 1080...) lamer portudur: reputation'ı düşük,
+# ömrü saatlik, her script kiddie oraya bakar. Gerçek kuyu 5-6 hanededir.
 TIER_PORTS = {
-    "P1": [3128, 8080, 3129, 10000],          # hosting/VPS — Squid kovanı
-    "P2": [8080, 3128, 1080, 8000],           # kurumsal/statik
-    "P3": [1080, 7777, 7000, 823, 6060],      # residential/CPE
-    "default": [10000, 12000, 20000, 30000],  # 5 haneli kuyu
+    "P1": [10000, 12000, 20000, 31280],      # hosting/VPS — 5 haneli Squid kovanı
+    "P2": [30000, 40000, 45000],             # kurumsal/statik — unutulmuş 5 haneli
+    "P3": [50000, 60000, 61000, 62000],      # residential/CPE — yüksek dinamik bant
+    "default": [10000, 12000, 20000, 30000, 40000, 50000, 60000],
 }
 FARM_EXPANSION = (10000, 40000)   # çapa veren IP'nin genlenecek port aralığı
 PILOT_SAMPLE = 256                # pilot ısırık örneklem boyutu
