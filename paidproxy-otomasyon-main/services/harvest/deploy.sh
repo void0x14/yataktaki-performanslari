@@ -13,9 +13,10 @@ scp -i "$KEY" -o ConnectTimeout=20 \
   services/harvest/ripe.py \
   services/harvest/classify.py \
   services/harvest/pipeline.py \
+  services/harvest/status.py \
   "$VDS:/tmp/harvest_pkg/" 2>/dev/null || {
     ssh -i "$KEY" "$VDS" "mkdir -p /tmp/harvest_pkg $REMOTE_DIR"
-    scp -i "$KEY" services/harvest/{__init__,ripe,classify,pipeline}.py "$VDS:/tmp/harvest_pkg/"
+    scp -i "$KEY" services/harvest/{__init__,ripe,classify,pipeline,status}.py "$VDS:/tmp/harvest_pkg/"
   }
 
 echo "=== 2/4: Yerleştirme + dizinler ==="
