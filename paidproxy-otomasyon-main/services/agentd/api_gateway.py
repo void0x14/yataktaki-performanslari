@@ -74,29 +74,13 @@ def agentd_call(command: str, payload: dict | None = None, timeout: float = 15.0
 
 
 def harvest_snapshot() -> dict:
-    """Tek gerçek kaynak: /home/mani/harvest (status.json + teslim kovaları)."""
+    """Tek gerçek kaynak: /home/mani/harvest/status.py build_payload()."""
     if _hstatus is None:
         return {"ok": False, "error": "harvest status modülü yok"}
-    state = {}
-    if _hstatus.STATUS.exists():
-        try:
-            state = json.loads(_hstatus.STATUS.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            state = {}
-    proxies, counts, candidates = _hstatus._read_proxies()
-    return {
-        "ok": True,
-        "phase": state.get("phase", "bilinmiyor"),
-        "target": state.get("target", "-"),
-        "asn": state.get("asn", "-"),
-        "tier": state.get("tier", "-"),
-        "scanned_ips": int(state.get("scanned_ips", 0) or 0),
-        "open_ports": int(state.get("open_ports", 0) or 0),
-        "total_live": len(proxies),
-        **counts,
-        "candidates": candidates,
-        "proxies": proxies,
-    }
+    try:
+        return _hstatus.build_payload()
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def systemctl(action: str, unit: str) -> dict:

@@ -36,7 +36,9 @@ TIER_PORTS = {
     "P3": [10808, 50000, 60000, 61000, 62000],         # residential/CPE
     "default": [10808, 10809, 10000, 12000, 20000, 30000, 40000, 50000, 60000],
 }
-FARM_EXPANSION = (10000, 40000)   # çapa veren IP'nin genlenecek port aralığı
+FARM_EXPANSION = (10000, 65535)   # 5 hanenin TAMAMI — 40000 kesme kör noktası kaldırıldı
+FARM_FULL_MAX = 24                # tam süpürme yapılacak lider çiftlik sayısı/tur
+FARM_FULL_MAX = 24                # tam aralık (30k port) genlenecek lider çiftlik sayısı/tur
 PILOT_SAMPLE = 256                # pilot ısırık örneklem boyutu
 EXPAND_CHUNK = 65536              # genleme masscan parça boyutu (IP sayısı)
 
@@ -88,12 +90,13 @@ class StatusWriter:
         tmp.replace(self.path)
 
 
-def masscan(targets: list[str], ports: list[int], rate: int,
+def masscan(targets: list[str], ports: "list[int] | str", rate: int,
             wait: int = 3, binary: str = "masscan") -> list[tuple[str, int]]:
-    """L4 SYN taraması — dönüş: [(ip, port)]."""
+    """L4 SYN taraması — dönüş: [(ip, port)]. ports: liste ya da aralık dizgesi ("10000-65535")."""
     if not targets or not ports:
         return []
-    cmd = [binary, *targets, "-p", ",".join(str(p) for p in ports),
+    port_spec = ports if isinstance(ports, str) else ",".join(str(p) for p in ports)
+    cmd = [binary, *targets, "-p", port_spec,
            "--rate", str(rate), "--wait", str(wait), "-oL", "-"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
@@ -108,6 +111,68 @@ def masscan(targets: list[str], ports: list[int], rate: int,
             except (ValueError, IndexError):
                 continue
     return out
+
+
+def _merge_farms(workdir: Path, pairs: list[tuple[str, int]],
+                 verdicts: list | None = None) -> None:
+    """Çiftlik raporu (kalıcı): ip başına açık port sayısı + doğrulanmış + örnek portlar.
+
+    Kokpit 'tek IP'de çoklu port' görünümünü bu dosyadan okur:
+    var/harvest/ciftlikler.json
+    """
+    path = workdir / "var/harvest/ciftlikler.json"
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        report = {}
+    if not isinstance(report, dict):
+        report = {}
+    now = int(time.time())
+    counts: dict[str, int] = {}
+    samples: dict[str, list[int]] = {}
+    for ip, port in pairs:
+        counts[ip] = counts.get(ip, 0) + 1
+        bucket = samples.setdefault(ip, [])
+        if len(bucket) < 12 and port not in bucket:
+            bucket.append(port)
+    for ip, n in counts.items():
+        rec = report.get(ip)
+        if not isinstance(rec, dict):
+            rec = {"open": 0, "verified": 0, "sample": [], "ts": 0}
+        rec["open"] = max(int(rec.get("open", 0) or 0), n)
+        existing = [int(p) for p in (rec.get("sample") or [])]
+        for port in samples.get(ip, []):
+            if port not in existing and len(existing) < 12:
+                existing.append(port)
+        rec["sample"] = existing
+        rec["ts"] = now
+        report[ip] = rec
+    if verdicts:
+        verified: dict[str, int] = {}
+        for v in verdicts:
+            if getattr(v, "alive", False):
+                verified[v.ip] = verified.get(v.ip, 0) + 1
+        for ip, n in verified.items():
+            rec = report.get(ip)
+            if not isinstance(rec, dict):
+                rec = {"open": 0, "verified": 0, "sample": [], "ts": now}
+            rec["verified"] = max(int(rec.get("verified", 0) or 0), n)
+            rec["ts"] = now
+            report[ip] = rec
+    # Rapor şişmesin: anlamlı kayıtlar kalır
+    cutoff = now - 86400 * 3
+    report = {
+        ip: rec for ip, rec in report.items()
+        if isinstance(rec, dict) and (
+            int(rec.get("open", 0) or 0) >= 2
+            or int(rec.get("verified", 0) or 0) > 0
+            or int(rec.get("ts", 0) or 0) >= cutoff
+        )
+    }
+    try:
+        path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def pilot_sample(cidr: str, size: int = PILOT_SAMPLE) -> list[str]:
@@ -193,11 +258,15 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                     continue
 
                 # --- Aşama 4: Kovan genleme (çapa veren IP'ler) ---
+                # 5 hanenin TAMAMI süpürülür (10000-65535). Lider çiftliklere tam
+                # aralık; kalanlara hızlı örnek (sonraki turlarda lidere terfi eder).
                 farm_ips = sorted({ip for ip, _ in hits})
-                farm_targets = []
                 lo, hi = FARM_EXPANSION
-                farm_ports = list(range(lo, hi + 1, 25))  # seyrek kovan dişi
-                farm_hits = masscan(farm_ips, farm_ports, rate)
+                leaders = farm_ips[:FARM_FULL_MAX]
+                kalan = farm_ips[FARM_FULL_MAX:]
+                farm_hits = masscan(leaders, f"{lo}-{hi}", rate) if leaders else []
+                if kalan:
+                    farm_hits += masscan(kalan, list(range(lo, hi + 1, 25)), rate)
                 all_hits = sorted(set(hits) | set(farm_hits))
                 open_ports += len(farm_hits)
 
@@ -219,6 +288,7 @@ def run_pipeline(countries: list[str], rate: int, workdir: Path,
                     live_now[fname.replace(".txt", "")] = len(new)
                     totals.setdefault(fname, set()).update(lines)
 
+                _merge_farms(workdir, all_hits, verdicts)
                 alive_count = sum(1 for v in verdicts if v.alive)
                 engine.record_hit(t["asn"], alive_count)
                 status.update(phase="deliver", target=cidr,
