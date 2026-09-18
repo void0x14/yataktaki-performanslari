@@ -141,7 +141,9 @@ class TargetEngine:
             pref = p.get("prefix") if isinstance(p, dict) else p
             if pref and ":" not in str(pref):
                 out.append(str(pref))
-        return sorted(set(out), key=lambda x: ipaddress.ip_network(x, strict=False).prefixlen)
+        # Obje kurmadan string'den prefix boyu — dev ASN listelerinde (10k+)
+        # ip_network kurmak ASN başına dakikalar sürer (py-spy kanıtlı takılma).
+        return sorted(set(out), key=lambda x: int(x.rsplit("/", 1)[1]) if "/" in x else 32)
 
     def network_info(self, ip: str) -> dict:
         data = self._get(f"network-info/data.json?resource={ip}", ttl=86400)
