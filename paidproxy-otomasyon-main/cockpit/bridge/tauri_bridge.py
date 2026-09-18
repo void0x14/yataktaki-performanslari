@@ -19,7 +19,7 @@ def _get_harvest_data(cfg, force: bool = False) -> dict:
     if not force and _HARVEST_CACHE["data"] is not None and (now - _HARVEST_CACHE["ts"]) < 2.5:
         return _HARVEST_CACHE["data"]
 
-    cmd = "/home/mani/paidproxy-otomasyon/.venv/bin/python /tmp/harvest/status.py"
+    cmd = "/usr/bin/python3 /home/mani/harvest/status.py"
     try:
         ret = run_remote(cfg, cmd, timeout=8)
         data = json.loads(ret.stdout.strip())
@@ -43,32 +43,25 @@ def _get_harvest_data(cfg, force: bool = False) -> dict:
 
 
 def _start_anchor_scan(cfg, payload: dict) -> dict:
-    raw_targets = str(payload.get("targets", "")).strip()
-    ports = str(payload.get("ports", "10000,30000,8080,3128")).strip() or "10000,30000,8080,3128"
-    try:
-        rate = int(payload.get("rate", 4000) or 4000)
-    except Exception:
-        rate = 4000
-    rate = max(500, min(100000, rate))
-
-    import base64
-    b64 = base64.b64encode(raw_targets.encode("utf-8")).decode("ascii")
-    cmd = f"""
-mkdir -p /tmp/harvest && cd /tmp/harvest
-echo "{b64}" | base64 -d > custom_targets.txt
-if [ ! -s custom_targets.txt ]; then
-    cat /tmp/av/hedefler.txt cgnat-v4.txt 2>/dev/null | sort -u > custom_targets.txt
-fi
-sudo -n pkill -9 -f "masscan.*pas1" 2>/dev/null || true
-sleep 1
-setsid nohup sudo -n masscan $(cat custom_targets.txt | tr '\\n' ' ') -p {ports} --rate {rate} --wait 1 -oL pas1.hits >pas1.log 2>&1 </dev/null &
-echo "STARTED"
-"""
+    """Otonom fabrikayı başlat (harvest.service 7/24 döngüsü)."""
+    cmd = "sudo -n systemctl start harvest.service 2>&1; sudo -n systemctl is-active harvest.service"
     try:
         ret = run_remote(cfg, cmd, timeout=12)
-        return {"ok": True, "message": f"Çapa taraması VDS'te başlatıldı (Portlar: {ports}, Hız: {rate} pps)"}
+        durum = ret.stdout.strip().splitlines()[-1] if ret.stdout.strip() else "?"
+        return {"ok": True, "message": f"Otonom hasat fabrikası başlatıldı (durum: {durum})"}
     except Exception as exc:
-        return {"ok": False, "error": f"Tarama başlatılamadı: {type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": f"Başlatılamadı: {type(exc).__name__}: {exc}"}
+
+
+def _start_gen_and_check(cfg, payload: dict) -> dict:
+    """Döngüyü tazele — harvest.service yeniden başlatılır."""
+    cmd = "sudo -n systemctl restart harvest.service 2>&1; sudo -n systemctl is-active harvest.service"
+    try:
+        ret = run_remote(cfg, cmd, timeout=15)
+        durum = ret.stdout.strip().splitlines()[-1] if ret.stdout.strip() else "?"
+        return {"ok": True, "message": f"Otonom döngü tazelendi (durum: {durum})"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Tazelenemedi: {type(exc).__name__}: {exc}"}
 
 
 def _start_gen_and_check(cfg, payload: dict) -> dict:
@@ -89,7 +82,7 @@ echo "STARTED $TOTAL_IPS"
 
 
 def _stop_all_scans(cfg) -> dict:
-    cmd = "sudo -n pkill -9 -f masscan 2>/dev/null; pkill -9 -f stream_validator 2>/dev/null; pkill -9 -f siniflandir 2>/dev/null; echo 'STOPPED'"
+    cmd = "sudo -n systemctl stop harvest.service 2>/dev/null; sudo -n pkill -9 masscan 2>/dev/null; echo 'STOPPED'"
     try:
         ret = run_remote(cfg, cmd, timeout=8)
         return {"ok": True, "message": "VDS üzerindeki tüm tarama ve doğrulama süreçleri durduruldu."}
